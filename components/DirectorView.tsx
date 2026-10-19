@@ -9,7 +9,10 @@ import {
   SafeAreaView,
   StatusBar,
   Platform,
+  Modal,
+  Image,
 } from 'react-native';
+import QRCode from 'qrcode';
 import { useIntercom, Participant } from '../context/IntercomContext';
 import {
   voiceCommandService,
@@ -64,6 +67,54 @@ export const DirectorView: React.FC = () => {
   const [cameraMuteMap, setCameraMuteMap] = useState<Record<string, boolean>>({});
   const [isAuthModalOpen, setIsAuthModalOpen] = useState<boolean>(false);
   const [activeTab, setActiveTab] = useState<'tally' | 'audio' | 'vmix'>('tally');
+
+  // QR Code camera invite modal state
+  const [isQrModalOpen, setIsQrModalOpen] = useState<boolean>(false);
+  const [qrDataUrl, setQrDataUrl] = useState<string>('');
+  const [copiedLink, setCopiedLink] = useState<boolean>(false);
+
+  const getCameraInviteUrl = () => {
+    let baseUrl = 'https://intercon-tally-v2-vmix.onrender.com';
+    if (typeof window !== 'undefined' && window.location && window.location.origin) {
+      baseUrl = window.location.origin;
+    }
+    const cleanRoom = encodeURIComponent(currentRoomId || 'DEFAULT');
+    return `${baseUrl}/?room=${cleanRoom}&role=CAM`;
+  };
+
+  useEffect(() => {
+    if (isQrModalOpen) {
+      const inviteUrl = getCameraInviteUrl();
+      QRCode.toDataURL(inviteUrl, {
+        width: 320,
+        margin: 2,
+        color: {
+          dark: '#000000',
+          light: '#FFFFFF',
+        },
+        errorCorrectionLevel: 'M',
+      })
+        .then((url) => {
+          setQrDataUrl(url);
+        })
+        .catch((err) => {
+          console.warn('[DirectorView] Error generating QR code:', err);
+        });
+    }
+  }, [isQrModalOpen, currentRoomId]);
+
+  const handleCopyInviteLink = async () => {
+    const inviteUrl = getCameraInviteUrl();
+    try {
+      if (typeof navigator !== 'undefined' && navigator.clipboard) {
+        await navigator.clipboard.writeText(inviteUrl);
+        setCopiedLink(true);
+        setTimeout(() => setCopiedLink(false), 2500);
+      }
+    } catch (err) {
+      console.warn('[DirectorView] Failed to copy invite link:', err);
+    }
+  };
 
   // Initialize vMix config and start background status polling (every 3 seconds)
   useEffect(() => {
@@ -329,6 +380,16 @@ export const DirectorView: React.FC = () => {
         </View>
 
         <View style={styles.headerRight}>
+          {/* Top Bar Button: [ 📱 QR CÁMARAS ] */}
+          <TouchableOpacity
+            style={styles.qrHeaderBtn}
+            onPress={() => setIsQrModalOpen(true)}
+            activeOpacity={0.8}
+          >
+            <Text style={styles.qrHeaderBtnIcon}>📱</Text>
+            <Text style={styles.qrHeaderBtnText}>QR CÁMARAS</Text>
+          </TouchableOpacity>
+
           <TouchableOpacity
             style={[styles.headerMicBtn, isMuted ? styles.headerMicMuted : styles.headerMicActive]}
             onPress={toggleMute}
@@ -1131,6 +1192,96 @@ export const DirectorView: React.FC = () => {
         visible={isAuthModalOpen}
         onClose={() => setIsAuthModalOpen(false)}
       />
+
+      {/* Director QR Code Invite Modal for Cameras */}
+      <Modal
+        visible={isQrModalOpen}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setIsQrModalOpen(false)}
+      >
+        <View style={styles.qrModalOverlay}>
+          <View style={styles.qrModalCard}>
+            {/* Modal Header */}
+            <View style={styles.qrModalHeader}>
+              <View style={styles.qrModalTitleCol}>
+                <View style={styles.qrModalBadgeRow}>
+                  <Text style={styles.qrModalBadgeIcon}>📱</Text>
+                  <Text style={styles.qrModalTitle}>CÓDIGO QR PARA CÁMARAS</Text>
+                </View>
+                <Text style={styles.qrModalSubtitle}>
+                  Acceso directo a producción sin teclear la sala
+                </Text>
+              </View>
+              <TouchableOpacity
+                style={styles.qrModalCloseBtn}
+                onPress={() => setIsQrModalOpen(false)}
+                activeOpacity={0.7}
+              >
+                <Text style={styles.qrModalCloseText}>✕</Text>
+              </TouchableOpacity>
+            </View>
+
+            {/* Room Identifier Badge */}
+            <View style={styles.qrRoomPillContainer}>
+              <Text style={styles.qrRoomPillLabel}>SALA ACTIVA:</Text>
+              <View style={styles.qrRoomPill}>
+                <View style={styles.qrRoomPillDot} />
+                <Text style={styles.qrRoomPillValue}>{currentRoomId || 'DEFAULT'}</Text>
+              </View>
+            </View>
+
+            {/* QR Code Presentation Box */}
+            <View style={styles.qrCodeBox}>
+              {qrDataUrl ? (
+                <Image
+                  source={{ uri: qrDataUrl }}
+                  style={styles.qrCodeImage}
+                  resizeMode="contain"
+                />
+              ) : (
+                <View style={styles.qrLoadingBox}>
+                  <Text style={styles.qrLoadingText}>Generando código QR...</Text>
+                </View>
+              )}
+            </View>
+
+            {/* Explanatory text */}
+            <Text style={styles.qrInstructionsText}>
+              Apunta con la cámara del móvil o tablet para conectar directamente como operador de cámara a la sala privada de esta producción.
+            </Text>
+
+            {/* Direct URL Box */}
+            <View style={styles.qrUrlBox}>
+              <Text style={styles.qrUrlText} numberOfLines={1} selectable>
+                {getCameraInviteUrl()}
+              </Text>
+            </View>
+
+            {/* Actions: Copy Link & Close */}
+            <View style={styles.qrActionsRow}>
+              <TouchableOpacity
+                style={[styles.qrCopyBtn, copiedLink ? styles.qrCopyBtnActive : null]}
+                onPress={handleCopyInviteLink}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.qrCopyBtnIcon}>{copiedLink ? '✅' : '📋'}</Text>
+                <Text style={styles.qrCopyBtnText}>
+                  {copiedLink ? '¡ENLACE COPIADO!' : 'COPIAR ENLACE DIRECTO'}
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.qrDismissBtn}
+                onPress={() => setIsQrModalOpen(false)}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.qrDismissBtnText}>CERRAR</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 };
@@ -2478,6 +2629,215 @@ const styles = StyleSheet.create({
   },
   vmixBodyAlwaysOpen: {
     gap: 12,
+  },
+  qrHeaderBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: 'rgba(0, 229, 255, 0.12)',
+    borderWidth: 1,
+    borderColor: '#00E5FF',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 6,
+    cursor: 'pointer',
+  },
+  qrHeaderBtnIcon: {
+    fontSize: 13,
+  },
+  qrHeaderBtnText: {
+    color: '#00E5FF',
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 0.5,
+  },
+  qrModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.85)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 16,
+  },
+  qrModalCard: {
+    width: '100%',
+    maxWidth: 440,
+    backgroundColor: '#12121A',
+    borderRadius: 16,
+    borderWidth: 1.5,
+    borderColor: '#26263A',
+    padding: 24,
+    alignItems: 'center',
+    // @ts-ignore
+    boxShadow: '0 20px 50px rgba(0,0,0,0.8)',
+  },
+  qrModalHeader: {
+    width: '100%',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    marginBottom: 14,
+  },
+  qrModalTitleCol: {
+    flex: 1,
+  },
+  qrModalBadgeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  qrModalBadgeIcon: {
+    fontSize: 16,
+  },
+  qrModalTitle: {
+    color: '#FFFFFF',
+    fontSize: 15,
+    fontWeight: '900',
+    letterSpacing: 0.8,
+  },
+  qrModalSubtitle: {
+    color: '#8E8EA8',
+    fontSize: 11,
+    marginTop: 3,
+  },
+  qrModalCloseBtn: {
+    padding: 6,
+    borderRadius: 6,
+    backgroundColor: '#1E1E2C',
+    cursor: 'pointer',
+  },
+  qrModalCloseText: {
+    color: '#A0A0B8',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  qrRoomPillContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 16,
+  },
+  qrRoomPillLabel: {
+    color: '#71718A',
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  qrRoomPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: 'rgba(0, 230, 118, 0.12)',
+    borderWidth: 1,
+    borderColor: '#00E676',
+    paddingHorizontal: 10,
+    paddingVertical: 3,
+    borderRadius: 12,
+  },
+  qrRoomPillDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#00E676',
+  },
+  qrRoomPillValue: {
+    color: '#00E676',
+    fontSize: 12,
+    fontWeight: '900',
+    letterSpacing: 1,
+  },
+  qrCodeBox: {
+    width: 250,
+    height: 250,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    padding: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 16,
+    borderWidth: 2,
+    borderColor: '#00E5FF',
+    // @ts-ignore
+    boxShadow: '0 0 20px rgba(0, 229, 255, 0.3)',
+  },
+  qrCodeImage: {
+    width: 230,
+    height: 230,
+  },
+  qrLoadingBox: {
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  qrLoadingText: {
+    color: '#12121A',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  qrInstructionsText: {
+    color: '#A0A0B8',
+    fontSize: 11.5,
+    textAlign: 'center',
+    lineHeight: 16,
+    marginBottom: 14,
+    paddingHorizontal: 8,
+  },
+  qrUrlBox: {
+    width: '100%',
+    backgroundColor: '#0A0A0F',
+    borderWidth: 1,
+    borderColor: '#242436',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    marginBottom: 16,
+  },
+  qrUrlText: {
+    color: '#00E5FF',
+    fontSize: 10.5,
+    fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
+    textAlign: 'center',
+  },
+  qrActionsRow: {
+    width: '100%',
+    flexDirection: 'row',
+    gap: 10,
+  },
+  qrCopyBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: '#00C853',
+    paddingVertical: 12,
+    borderRadius: 8,
+    cursor: 'pointer',
+    // @ts-ignore
+    boxShadow: '0 4px 12px rgba(0, 200, 83, 0.35)',
+  },
+  qrCopyBtnActive: {
+    backgroundColor: '#00E676',
+  },
+  qrCopyBtnIcon: {
+    fontSize: 14,
+  },
+  qrCopyBtnText: {
+    color: '#FFFFFF',
+    fontSize: 11,
+    fontWeight: '900',
+    letterSpacing: 0.5,
+  },
+  qrDismissBtn: {
+    paddingHorizontal: 18,
+    paddingVertical: 12,
+    borderRadius: 8,
+    backgroundColor: '#20202E',
+    alignItems: 'center',
+    justifyContent: 'center',
+    cursor: 'pointer',
+  },
+  qrDismissBtnText: {
+    color: '#D1D5DB',
+    fontSize: 11,
+    fontWeight: '800',
   },
 });
 

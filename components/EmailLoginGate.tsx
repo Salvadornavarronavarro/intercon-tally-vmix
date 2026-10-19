@@ -15,6 +15,7 @@ import {
 } from 'react-native';
 import { authService, AuthSession } from '../services/authService';
 import { UserRole, CameraId } from '../context/IntercomContext';
+import { normalizeRoomId } from '../services/signalingService';
 
 export interface LoginSuccessPayload {
   session: AuthSession;
@@ -52,6 +53,10 @@ export const EmailLoginGate: React.FC<EmailLoginGateProps> = ({
   const [operatorName, setOperatorName] = useState('');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isHovered, setIsHovered] = useState(false);
+  const [isRoomLocked, setIsRoomLocked] = useState(false);
+  const [roomCheckStatus, setRoomCheckStatus] = useState<
+    'idle' | 'checking' | 'available' | 'occupied'
+  >('idle');
 
   // Smooth blinking / pulsing animation for Room placeholder
   const pulseAnim = useRef(new Animated.Value(1)).current;
@@ -99,9 +104,101 @@ export const EmailLoginGate: React.FC<EmailLoginGateProps> = ({
     }
   }, []);
 
+  // Detect URL query parameters (?room=...&role=...&cam=...) on mount
+  useEffect(() => {
+    if (Platform.OS === 'web' && typeof window !== 'undefined' && window.location) {
+      try {
+        const searchParams = new URLSearchParams(window.location.search);
+        const queryRoom = searchParams.get('room') || searchParams.get('sala');
+        const queryRole = searchParams.get('role') || searchParams.get('rol');
+        const queryCam = searchParams.get('cam') || searchParams.get('camera');
+
+        if (queryRoom && queryRoom.trim()) {
+          const cleaned = normalizeRoomId(queryRoom);
+          setRoomId(cleaned);
+          setIsRoomLocked(true);
+        }
+
+        if (queryRole) {
+          const roleUpper = queryRole.trim().toUpperCase();
+          if (
+            roleUpper === 'CAM' ||
+            roleUpper === 'CAMERA' ||
+            roleUpper === 'CAMARA' ||
+            roleUpper === 'CÁMARA'
+          ) {
+            setRole('camera');
+          } else if (roleUpper === 'DIRECTOR') {
+            setRole('director');
+          }
+        } else if (queryRoom) {
+          // Default to camera when joining through a director invite link
+          setRole('camera');
+        }
+
+        if (queryCam) {
+          const lowerCam = queryCam.toLowerCase().trim();
+          const match = lowerCam.match(/\d+/);
+          if (match) {
+            const camNum = parseInt(match[0], 10);
+            if (camNum >= 1 && camNum <= 8) {
+              setSelectedCam(`cam${camNum}` as CameraId);
+            }
+          }
+        }
+      } catch (err) {
+        console.warn('[EmailLoginGate] Error parsing URL query params:', err);
+      }
+    }
+  }, []);
+
+  // Real-time debounced room collision validation when role === 'director'
+  useEffect(() => {
+    const trimmedRoom = roomId.trim();
+    if (role !== 'director' || trimmedRoom.length < 2) {
+      setRoomCheckStatus('idle');
+      return;
+    }
+
+    setRoomCheckStatus('checking');
+    const cleanRoom = normalizeRoomId(trimmedRoom);
+    let isCancelled = false;
+
+    const timer = setTimeout(async () => {
+      try {
+        const res = await fetch(`/api/rooms/check/${encodeURIComponent(cleanRoom)}`, {
+          headers: { Accept: 'application/json' },
+        });
+        if (!res.ok) {
+          if (!isCancelled) setRoomCheckStatus('available');
+          return;
+        }
+        const data = await res.json();
+        if (!isCancelled) {
+          if (data.hasActiveDirector) {
+            setRoomCheckStatus('occupied');
+          } else {
+            setRoomCheckStatus('available');
+          }
+        }
+      } catch (err) {
+        if (!isCancelled) {
+          setRoomCheckStatus('available');
+        }
+      }
+    }, 300);
+
+    return () => {
+      isCancelled = true;
+      clearTimeout(timer);
+    };
+  }, [roomId, role]);
+
   const isEmailValid = authService.validateEmail(email.trim()).valid;
   const isRoomValid = roomId.trim().length >= 1;
-  const canSubmit = isEmailValid && isRoomValid;
+  const isDirectorOccupied = role === 'director' && roomCheckStatus === 'occupied';
+  const isDirectorChecking = role === 'director' && roomCheckStatus === 'checking';
+  const canSubmit = isEmailValid && isRoomValid && !isDirectorOccupied && !isDirectorChecking;
 
   const handleSubmit = () => {
     const trimmedEmail = email.trim();
@@ -118,6 +215,13 @@ export const EmailLoginGate: React.FC<EmailLoginGateProps> = ({
       return;
     }
 
+    if (role === 'director' && roomCheckStatus === 'occupied') {
+      setErrorMessage(
+        '⚠️ Esta sala ya está ocupada por otra producción. Por favor, escribe un nombre diferente.'
+      );
+      return;
+    }
+
     setErrorMessage(null);
     const session = authService.login(trimmedEmail);
     onLoginSuccess({
@@ -126,7 +230,9 @@ export const EmailLoginGate: React.FC<EmailLoginGateProps> = ({
       roomId: trimmedRoom,
       role,
       selectedCam,
-      name: operatorName.trim() || (role === 'director' ? 'Director 1' : `Cam ${selectedCam.replace('cam', '')} Operator`),
+      name:
+        operatorName.trim() ||
+        (role === 'director' ? 'Director 1' : `Cam ${selectedCam.replace('cam', '')} Operator`),
     });
   };
 
@@ -197,9 +303,15 @@ export const EmailLoginGate: React.FC<EmailLoginGateProps> = ({
                 <View style={styles.formGroup}>
                   <View style={styles.labelRow}>
                     <Text style={styles.inputLabel}>SALA / GRUPO DE PRODUCCIÓN</Text>
-                    <View style={styles.requiredBadge}>
-                      <Text style={styles.requiredBadgeText}>OBLIGATORIO</Text>
-                    </View>
+                    {isRoomLocked ? (
+                      <View style={styles.lockedRoomBadge}>
+                        <Text style={styles.lockedRoomBadgeText}>🔒 ENLACE CÁMARA</Text>
+                      </View>
+                    ) : (
+                      <View style={styles.requiredBadge}>
+                        <Text style={styles.requiredBadgeText}>OBLIGATORIO</Text>
+                      </View>
+                    )}
                   </View>
 
                   <View style={styles.roomInputWrapper}>
@@ -207,11 +319,14 @@ export const EmailLoginGate: React.FC<EmailLoginGateProps> = ({
                       style={[
                         styles.input,
                         styles.roomInput,
+                        isRoomLocked ? styles.roomInputLocked : null,
                         !isRoomValid && errorMessage ? styles.inputError : null,
+                        role === 'director' && roomCheckStatus === 'occupied' ? styles.inputError : null,
                       ]}
                       placeholder=""
                       placeholderTextColor="transparent"
                       value={roomId}
+                      editable={!isRoomLocked}
                       onChangeText={(val) => {
                         setRoomId(val);
                         if (errorMessage) setErrorMessage(null);
@@ -241,6 +356,47 @@ export const EmailLoginGate: React.FC<EmailLoginGateProps> = ({
                       </Animated.View>
                     )}
                   </View>
+
+                  {/* Real-time Status Badges & Room Feedback */}
+                  {isRoomLocked ? (
+                    <View style={styles.roomLockedInfoBox}>
+                      <Text style={styles.roomLockedInfoText}>
+                        🔒 Sala asignada por el Director mediante invitación QR.
+                      </Text>
+                    </View>
+                  ) : null}
+
+                  {role === 'director' && roomCheckStatus === 'checking' && (
+                    <View style={styles.roomCheckingBox}>
+                      <Text style={styles.roomCheckingText}>
+                        🔍 Comprobando disponibilidad de sala...
+                      </Text>
+                    </View>
+                  )}
+
+                  {role === 'director' && roomCheckStatus === 'occupied' && (
+                    <View style={styles.roomOccupiedBox}>
+                      <Text style={styles.roomOccupiedText}>
+                        ⚠️ Esta sala ya está ocupada por otra producción. Por favor, escribe un nombre diferente.
+                      </Text>
+                    </View>
+                  )}
+
+                  {role === 'director' && roomCheckStatus === 'available' && roomId.trim().length >= 2 && (
+                    <View style={styles.roomAvailableBox}>
+                      <Text style={styles.roomAvailableText}>
+                        ✅ Nombre de sala disponible
+                      </Text>
+                    </View>
+                  )}
+
+                  {role === 'camera' && !isRoomLocked && (
+                    <View style={styles.roomCameraNoticeBox}>
+                      <Text style={styles.roomCameraNoticeText}>
+                        🎥 Acceso directo para operador de cámara a la sala.
+                      </Text>
+                    </View>
+                  )}
 
                   <Text style={styles.roomHelpNote}>
                     ⚡ Define un nombre único para que tu equipo se comunique en su propio canal privado.
@@ -364,6 +520,10 @@ export const EmailLoginGate: React.FC<EmailLoginGateProps> = ({
                     ? 'INTRODUCE UN CORREO VÁLIDO'
                     : !isRoomValid
                     ? 'INDICA TU SALA O GRUPO'
+                    : isDirectorChecking
+                    ? 'VERIFICANDO DISPONIBILIDAD...'
+                    : isDirectorOccupied
+                    ? 'SALA OCUPADA - CAMBIA EL NOMBRE'
                     : `ENTRAR A ${roomId.trim().toUpperCase()} COMO ${role.toUpperCase()}`}
                 </Text>
               </TouchableOpacity>
@@ -553,6 +713,97 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '700',
     letterSpacing: 0.2,
+  },
+  lockedRoomBadge: {
+    backgroundColor: 'rgba(0, 229, 255, 0.15)',
+    paddingHorizontal: 8,
+    paddingVertical: 2.5,
+    borderRadius: 4,
+    borderWidth: 1,
+    borderColor: '#00E5FF',
+  },
+  lockedRoomBadgeText: {
+    color: '#00E5FF',
+    fontSize: 9,
+    fontWeight: '900',
+    letterSpacing: 0.8,
+  },
+  roomInputLocked: {
+    backgroundColor: '#12121A',
+    borderColor: '#00E5FF',
+    color: '#00E5FF',
+    opacity: 0.95,
+  },
+  roomLockedInfoBox: {
+    marginTop: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 6,
+    backgroundColor: 'rgba(0, 229, 255, 0.08)',
+    borderWidth: 1,
+    borderColor: 'rgba(0, 229, 255, 0.3)',
+  },
+  roomLockedInfoText: {
+    color: '#80DEEA',
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  roomCheckingBox: {
+    marginTop: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 6,
+    backgroundColor: 'rgba(255, 214, 0, 0.08)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 214, 0, 0.3)',
+  },
+  roomCheckingText: {
+    color: '#FFD600',
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  roomOccupiedBox: {
+    marginTop: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderRadius: 6,
+    backgroundColor: 'rgba(255, 23, 68, 0.12)',
+    borderWidth: 1,
+    borderColor: '#FF1744',
+  },
+  roomOccupiedText: {
+    color: '#FF5252',
+    fontSize: 11.5,
+    fontWeight: '700',
+    lineHeight: 16,
+  },
+  roomAvailableBox: {
+    marginTop: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 6,
+    backgroundColor: 'rgba(0, 230, 118, 0.1)',
+    borderWidth: 1,
+    borderColor: 'rgba(0, 230, 118, 0.4)',
+  },
+  roomAvailableText: {
+    color: '#00E676',
+    fontSize: 11.5,
+    fontWeight: '700',
+  },
+  roomCameraNoticeBox: {
+    marginTop: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 6,
+    backgroundColor: 'rgba(0, 230, 118, 0.08)',
+    borderWidth: 1,
+    borderColor: 'rgba(0, 230, 118, 0.25)',
+  },
+  roomCameraNoticeText: {
+    color: '#69F0AE',
+    fontSize: 11,
+    fontWeight: '600',
   },
   roomHelpNote: {
     color: '#71718A',

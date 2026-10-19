@@ -12,6 +12,7 @@
     "expo-keep-awake": "~57.0.2",
     "expo-status-bar": "~57.0.1",
     "express": "^5.3.0",
+    "qrcode": "^1.5.4",
     "react": "19.2.3",
     "react-dom": "19.2.3",
     "react-native": "0.86.3",
@@ -33,6 +34,7 @@
     "node": ">=20.0.0"
   },
   "devDependencies": {
+    "@types/qrcode": "^1.5.6",
     "@types/react": "~19.2.4",
     "typescript": "~6.0.3"
   },

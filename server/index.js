@@ -402,6 +402,52 @@ function getAllSubscribers() {
   }
 }
 
+// GET /api/rooms/check/:roomName - Strict active room uniqueness & director collision check
+app.get(['/api/rooms/check/:roomName', '/api/rooms/check'], (req, res) => {
+  const rawRoomName = req.params.roomName || req.query.room || '';
+  const cleanRoomId = normalizeRoomId(rawRoomName);
+
+  if (!cleanRoomId || (cleanRoomId === 'DEFAULT' && rawRoomName.trim().toUpperCase() !== 'DEFAULT')) {
+    return res.status(200).json({
+      success: true,
+      roomId: cleanRoomId,
+      exists: false,
+      hasActiveDirector: false,
+      directorName: null,
+      participantCount: 0,
+      message: 'Empty or invalid room name',
+    });
+  }
+
+  const room = rooms.get(cleanRoomId);
+  let hasActiveDirector = false;
+  let directorName = null;
+
+  if (room && room.directorId) {
+    const directorParticipant = room.participants.get(room.directorId);
+    if (directorParticipant && directorParticipant.ws && directorParticipant.ws.readyState === WebSocket.OPEN) {
+      hasActiveDirector = true;
+      directorName = directorParticipant.user?.name || 'Director';
+    } else {
+      // Clean up stale director reference if socket disconnected
+      room.directorId = null;
+    }
+  }
+
+  const activeParticipants = room
+    ? Array.from(room.participants.values()).filter((p) => p.ws && p.ws.readyState === WebSocket.OPEN).length
+    : 0;
+
+  return res.status(200).json({
+    success: true,
+    roomId: cleanRoomId,
+    exists: !!room && activeParticipants > 0,
+    hasActiveDirector,
+    directorName,
+    participantCount: activeParticipants,
+  });
+});
+
 // POST /api/subscribers - Registers a verified subscriber lead
 app.post(['/api/subscribers', '/api/auth/register-lead'], async (req, res) => {
   const rawEmail = req.body.email || req.query.email;
