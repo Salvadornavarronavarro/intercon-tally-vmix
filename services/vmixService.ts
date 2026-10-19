@@ -328,6 +328,21 @@ class VmixService {
       return false;
     }
   }
+
+  /**
+   * Set Master Audio Volume in vMix:
+   * Function=SetMasterVolume&Value=[0-100]
+   */
+  public async setMasterVolume(percentage: number): Promise<boolean> {
+    try {
+      const clamped = Math.max(0, Math.min(100, Math.round(percentage)));
+      const result = await this.dispatchCommand('SetMasterVolume', undefined, { Value: clamped.toString() });
+      return result.success;
+    } catch (err: any) {
+      console.warn('[VmixService] setMasterVolume caught error:', err.message);
+      return false;
+    }
+  }
 }
 
 export const vmixService = new VmixService();

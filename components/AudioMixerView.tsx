@@ -7,6 +7,7 @@ import {
   ScrollView,
   Platform,
 } from 'react-native';
+import { vmixService } from '../services/vmixService';
 
 export interface AudioMixerViewProps {
   cameraCount?: number;
@@ -343,17 +344,32 @@ export const AudioMixerView: React.FC<AudioMixerViewProps> = ({
     });
   }, [masterVolume, masterVolumeL, masterVolumeR]);
 
-  const handleSetMasterVolume = useCallback((newVol: number) => {
-    setMasterVolume(Math.max(0, Math.min(1, newVol)));
+  const lastVmixMasterSentRef = useRef<number>(0);
+  const sendVmixMasterThrottled = useCallback((val: number, force: boolean = false) => {
+    const now = Date.now();
+    if (force || now - lastVmixMasterSentRef.current > 80) {
+      lastVmixMasterSentRef.current = now;
+      vmixService.setMasterVolume(val * 100).catch(() => {});
+    }
   }, []);
+
+  const handleSetMasterVolume = useCallback((newVol: number) => {
+    const clamped = Math.max(0, Math.min(1, newVol));
+    setMasterVolume(clamped);
+    sendVmixMasterThrottled(clamped);
+  }, [sendVmixMasterThrottled]);
 
   const handleSetMasterVolumeL = useCallback((newVol: number) => {
-    setMasterVolumeL(Math.max(0, Math.min(1, newVol)));
-  }, []);
+    const clamped = Math.max(0, Math.min(1, newVol));
+    setMasterVolumeL(clamped);
+    sendVmixMasterThrottled(clamped);
+  }, [sendVmixMasterThrottled]);
 
   const handleSetMasterVolumeR = useCallback((newVol: number) => {
-    setMasterVolumeR(Math.max(0, Math.min(1, newVol)));
-  }, []);
+    const clamped = Math.max(0, Math.min(1, newVol));
+    setMasterVolumeR(clamped);
+    sendVmixMasterThrottled(clamped);
+  }, [sendVmixMasterThrottled]);
 
   const handleAllMute = () => {
     const allCurrentlyMuted = channels.every((ch) => ch.muted);
@@ -369,7 +385,7 @@ export const AudioMixerView: React.FC<AudioMixerViewProps> = ({
     );
   };
 
-  // Robust Fader Drag Interactions with Window Listeners, Pointer Capture, and Clamped Travel
+  // Robust Fader Drag Interactions with Calibrated Headroom, Window Listeners, and Pointer Capture
   const handleFaderPointerDown = (e: any, targetId: string) => {
     if (Platform.OS === 'web' && e) {
       const nativeEvent = e.nativeEvent || e;
@@ -399,12 +415,31 @@ export const AudioMixerView: React.FC<AudioMixerViewProps> = ({
 
       const trackRect = trackElement?.getBoundingClientRect ? trackElement.getBoundingClientRect() : null;
 
+      // Cap half-height offsets so the cap's center line accurately aligns with +10 dB at top and -inf at bottom
+      const capHalfHeight = targetId === 'master' ? 22 : (targetId.startsWith('master_') ? 19 : 21);
+      const effectiveCapHalfHeight = trackRect ? Math.min(capHalfHeight, trackRect.height * 0.25) : capHalfHeight;
+      const topThreshold = trackRect ? trackRect.top + effectiveCapHalfHeight : 0;
+      const bottomThreshold = trackRect ? trackRect.bottom - effectiveCapHalfHeight : 1;
+      const usableSpan = Math.max(1, bottomThreshold - topThreshold);
+
+      let currentDragRatio = 0.75;
+
       const updateVolumeFromY = (clientY: number) => {
         if (!trackRect || trackRect.height <= 0) return;
-        const relativeY = clientY - trackRect.top;
-        // Strictly clamp vertical travel between 0% (-inf / 0.0) and 100% (+10 dB / 1.0)
-        const clampedFraction = Math.max(0, Math.min(1, relativeY / trackRect.height));
-        const ratio = 1 - clampedFraction;
+
+        // Top clamp triggers exactly when fader cap reaches the +10 dB visual line (at topThreshold)
+        // Bottom clamp triggers when fader cap reaches the -inf visual line (at bottomThreshold)
+        let ratio: number;
+        if (clientY <= topThreshold) {
+          ratio = 1.0;
+        } else if (clientY >= bottomThreshold) {
+          ratio = 0.0;
+        } else {
+          const fractionFromTop = (clientY - topThreshold) / usableSpan;
+          ratio = Math.max(0, Math.min(1, 1 - fractionFromTop));
+        }
+
+        currentDragRatio = ratio;
 
         if (targetId === 'master') {
           handleSetMasterVolume(ratio);
@@ -447,6 +482,9 @@ export const AudioMixerView: React.FC<AudioMixerViewProps> = ({
 
       const handleWindowPointerUp = () => {
         draggingTargetRef.current = null;
+        if (targetId === 'master' || targetId === 'master_L' || targetId === 'master_R') {
+          sendVmixMasterThrottled(currentDragRatio, true);
+        }
         if (captureTarget && pointerId !== undefined && typeof captureTarget.releasePointerCapture === 'function') {
           try {
             if (captureTarget.hasPointerCapture ? captureTarget.hasPointerCapture(pointerId) : true) {
@@ -989,7 +1027,7 @@ export const AudioMixerView: React.FC<AudioMixerViewProps> = ({
                       style={[
                         styles.masterFaderCapGanged,
                         {
-                          bottom: `${masterVolume * 84}%`,
+                          bottom: `${masterVolume * 85}%`,
                         },
                       ]}
                     >
@@ -1044,7 +1082,7 @@ export const AudioMixerView: React.FC<AudioMixerViewProps> = ({
                         style={[
                           styles.masterSplitFaderCap,
                           {
-                            bottom: `${masterVolumeL * 84}%`,
+                            bottom: `${masterVolumeL * 86}%`,
                           },
                         ]}
                       >
@@ -1072,7 +1110,7 @@ export const AudioMixerView: React.FC<AudioMixerViewProps> = ({
                         style={[
                           styles.masterSplitFaderCap,
                           {
-                            bottom: `${masterVolumeR * 84}%`,
+                            bottom: `${masterVolumeR * 86}%`,
                           },
                         ]}
                       >
