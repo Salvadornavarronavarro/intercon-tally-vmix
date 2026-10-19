@@ -583,75 +583,93 @@ export const AudioMixerView: React.FC<AudioMixerViewProps> = ({
             </View>
           </View>
 
-          {/* Master VU & Faders Area */}
+          {/* Master Fader (Left) & Dual VU Meters (Right) Area */}
           <View style={styles.masterMixArea}>
-            {/* Left VU Meter */}
-            <View style={styles.masterMeterBlock}>
-              <Text style={styles.channelLRHeader}>L</Text>
-              {renderLedMeter(masterMeterL, masterPeakL)}
-            </View>
+            {/* LEFT SIDE: Detailed dB Scale + Master Stereo Fader */}
+            <View style={styles.masterLeftFaderGroup}>
+              {/* Detailed dB Scale */}
+              <View style={styles.masterDbScaleColumn}>
+                {DB_GRADUATION_MARKS.map((m) => (
+                  <View key={m.label} style={styles.dbMarkRow}>
+                    <Text
+                      style={[
+                        styles.masterDbText,
+                        { color: m.color },
+                        m.isUnity && styles.dbLabelUnity,
+                      ]}
+                    >
+                      {m.label}
+                    </Text>
+                    <View
+                      style={[
+                        styles.dbTickMark,
+                        { backgroundColor: m.color },
+                        m.isUnity && styles.dbTickUnity,
+                      ]}
+                    />
+                  </View>
+                ))}
+              </View>
 
-            {/* Central Detailed dB Scale */}
-            <View style={styles.masterDbScaleColumn}>
-              {DB_GRADUATION_MARKS.map((m) => (
-                <Text
-                  key={m.label}
-                  style={[
-                    styles.masterDbText,
-                    { color: m.color },
-                    m.isUnity && styles.dbLabelUnity,
-                  ]}
-                >
-                  {m.label}
-                </Text>
-              ))}
-            </View>
-
-            {/* Right VU Meter */}
-            <View style={styles.masterMeterBlock}>
-              <Text style={styles.channelLRHeader}>R</Text>
-              {renderLedMeter(masterMeterR, masterPeakR)}
-            </View>
-
-            {/* Dual Stereo Faders (Ganged Together) */}
-            <View
-              style={styles.masterDualFadersColumn}
-              // @ts-ignore: React Native Web pointer event
-              onPointerDown={(e: any) => {
-                draggingTargetRef.current = { type: 'fader', id: 'master' };
-                updateFaderFromPointer(e);
-              }}
-              // @ts-ignore: React Native Web pointer event
-              onPointerMove={(e: any) => {
-                if (draggingTargetRef.current?.type === 'fader' && draggingTargetRef.current.id === 'master') {
+              {/* Dual Stereo Faders (Ganged Together) */}
+              <View
+                style={styles.masterDualFadersColumn}
+                // @ts-ignore: React Native Web pointer event
+                onPointerDown={(e: any) => {
+                  draggingTargetRef.current = { type: 'fader', id: 'master' };
                   updateFaderFromPointer(e);
-                }
-              }}
-              // @ts-ignore: React Native Web pointer event
-              onPointerUp={() => {
-                draggingTargetRef.current = null;
-              }}
-            >
-              <View style={styles.faderTrackContainer}>
-                {/* Dual Track Slots for L & R */}
-                <View style={styles.masterDualTrackSlot}>
-                  <View style={styles.faderSlotTrack} />
-                  <View style={styles.faderSlotTrack} />
-                </View>
+                }}
+                // @ts-ignore: React Native Web pointer event
+                onPointerMove={(e: any) => {
+                  if (draggingTargetRef.current?.type === 'fader' && draggingTargetRef.current.id === 'master') {
+                    updateFaderFromPointer(e);
+                  }
+                }}
+                // @ts-ignore: React Native Web pointer event
+                onPointerUp={() => {
+                  draggingTargetRef.current = null;
+                }}
+              >
+                <View style={styles.faderTrackContainer}>
+                  {/* Dual Track Slots for L & R */}
+                  <View style={styles.masterDualTrackSlot}>
+                    <View style={styles.faderSlotTrack}>
+                      <View style={styles.faderUnityNotch} />
+                    </View>
+                    <View style={styles.faderSlotTrack}>
+                      <View style={styles.faderUnityNotch} />
+                    </View>
+                  </View>
 
-                {/* Ganged Stereo Brushed Fader Handle with Dual Red Bridge */}
-                <View
-                  style={[
-                    styles.masterFaderCapGanged,
-                    {
-                      bottom: `${masterVolume * 84}%`,
-                    },
-                  ]}
-                >
-                  <View style={styles.masterCapBridgeLine} />
-                  <Text style={styles.masterCapText}>STEREO</Text>
-                  <View style={styles.masterCapBridgeLine} />
+                  {/* Ganged Stereo Brushed Fader Handle with Dual Red Bridge */}
+                  <View
+                    style={[
+                      styles.masterFaderCapGanged,
+                      {
+                        bottom: `${masterVolume * 84}%`,
+                      },
+                    ]}
+                  >
+                    <View style={styles.masterCapBridgeLine} />
+                    <Text style={styles.masterCapText}>STEREO</Text>
+                    <View style={styles.masterCapBridgeLine} />
+                  </View>
                 </View>
+              </View>
+            </View>
+
+            {/* RIGHT SIDE: Dual Stereo VU Meters (L and R LED Ladders) */}
+            <View style={styles.masterRightMetersGroup}>
+              {/* Left VU Meter */}
+              <View style={styles.masterMeterBlock}>
+                <Text style={styles.channelLRHeader}>L</Text>
+                {renderLedMeter(masterMeterL, masterPeakL)}
+              </View>
+
+              {/* Right VU Meter */}
+              <View style={styles.masterMeterBlock}>
+                <Text style={styles.channelLRHeader}>R</Text>
+                {renderLedMeter(masterMeterR, masterPeakR)}
               </View>
             </View>
           </View>
@@ -1215,13 +1233,29 @@ const styles = StyleSheet.create({
     width: '100%',
     flexDirection: 'row',
     alignItems: 'stretch',
+    justifyContent: 'space-between',
+    gap: 4,
+    marginVertical: 4,
+  },
+  masterLeftFaderGroup: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'stretch',
+    justifyContent: 'center',
+    gap: 3,
+  },
+  masterRightMetersGroup: {
+    flexDirection: 'row',
+    alignItems: 'stretch',
     justifyContent: 'center',
     gap: 5,
-    marginVertical: 4,
+    paddingLeft: 4,
+    borderLeftWidth: 1,
+    borderLeftColor: '#2C1822',
   },
   masterMeterBlock: {
     alignItems: 'center',
-    width: 14,
+    width: 13,
   },
   channelLRHeader: {
     color: '#FF8A80',
@@ -1231,9 +1265,9 @@ const styles = StyleSheet.create({
   },
   masterDbScaleColumn: {
     justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingVertical: 10,
-    width: 22,
+    alignItems: 'flex-end',
+    paddingVertical: 3,
+    width: 20,
   },
   masterDbText: {
     fontSize: 7,
