@@ -63,7 +63,7 @@ export const DirectorView: React.FC = () => {
   const [cameraMapState, setCameraMapState] = useState<Record<string, string>>(vmixService.getConfig().cameraMap);
   const [cameraMuteMap, setCameraMuteMap] = useState<Record<string, boolean>>({});
   const [isAuthModalOpen, setIsAuthModalOpen] = useState<boolean>(false);
-  const [activeTab, setActiveTab] = useState<'tally' | 'control' | 'vmix' | 'audio'>('tally');
+  const [activeTab, setActiveTab] = useState<'tally' | 'audio' | 'vmix'>('tally');
 
   // Initialize vMix config and start background status polling (every 3 seconds)
   useEffect(() => {
@@ -319,7 +319,7 @@ export const DirectorView: React.FC = () => {
         </View>
       </View>
 
-      {/* 4 Prominent Horizontal Navigation Tabs Header */}
+      {/* 3 Prominent Horizontal Navigation Tabs Header */}
       <View style={styles.tabNavContainer}>
         {/* TAB 1: TALLY & CÁMARAS */}
         <TouchableOpacity
@@ -347,36 +347,15 @@ export const DirectorView: React.FC = () => {
               </Text>
             </View>
           ) : null}
-        </TouchableOpacity>
-
-        {/* TAB 2: CONTROL & VOZ */}
-        <TouchableOpacity
-          style={[
-            styles.tabButton,
-            activeTab === 'control' && styles.tabButtonActive,
-          ]}
-          onPress={() => setActiveTab('control')}
-          activeOpacity={0.8}
-        >
-          <Text style={styles.tabIcon}>🎙️</Text>
-          <Text
-            style={[
-              styles.tabButtonText,
-              activeTab === 'control' && styles.tabButtonTextActive,
-            ]}
-            numberOfLines={1}
-          >
-            CONTROL & VOZ
-          </Text>
           {isVoiceActive ? (
             <View style={styles.tabVoiceListeningBadge}>
               <View style={styles.voicePulseDot} />
-              <Text style={styles.tabVoiceListeningText}>LISTENING</Text>
+              <Text style={styles.tabVoiceListeningText}>VOZ ON</Text>
             </View>
           ) : null}
         </TouchableOpacity>
 
-        {/* TAB 3: CONTROL DE SONIDO */}
+        {/* TAB 2: CONTROL DE SONIDO */}
         <TouchableOpacity
           style={[
             styles.tabButton,
@@ -397,7 +376,7 @@ export const DirectorView: React.FC = () => {
           </Text>
         </TouchableOpacity>
 
-        {/* TAB 4: CONEXIÓN VMIX (Strictly anchored as the last tab on the far right) */}
+        {/* TAB 3: CONEXIÓN VMIX (Strictly anchored as the last tab on the far right) */}
         <TouchableOpacity
           style={[
             styles.tabButton,
@@ -451,36 +430,46 @@ export const DirectorView: React.FC = () => {
             contentContainerStyle={styles.tabScrollContent}
             showsVerticalScrollIndicator={false}
           >
-            {/* Quick mini-status bar showing Live PGM and Standby PVW */}
-            <View style={styles.miniStatusBar}>
-              <View style={styles.miniStatusBox}>
-                <Text style={styles.miniStatusLabel}>PROGRAM:</Text>
-                <Text style={[styles.miniStatusVal, styles.programText]}>
-                  {activeProgramCamera ? CAMERA_LABELS[activeProgramCamera] || activeProgramCamera : 'NONE'}
-                </Text>
+            {/* Top Status & Transition Bar Overhaul (Program, Preview, CUT, FADE) */}
+            <View style={styles.topTransitionBar}>
+              <View style={styles.tallyBannersContainer}>
+                {/* PROGRAM Banner: Wider aspect, broadcast RED accent & subtle glow */}
+                <View style={[styles.tallyBannerBox, styles.programBannerBox]}>
+                  <View style={styles.bannerIndicatorDotRed} />
+                  <Text style={styles.programBannerLabel}>PROGRAM (LIVE):</Text>
+                  <Text style={styles.programBannerVal} numberOfLines={1}>
+                    {activeProgramCamera ? CAMERA_LABELS[activeProgramCamera] || activeProgramCamera.toUpperCase() : 'NONE'}
+                  </Text>
+                </View>
+
+                {/* PREVIEW Banner: Symmetrical wider aspect, broadcast GREEN accent & subtle glow */}
+                <View style={[styles.tallyBannerBox, styles.previewBannerBox]}>
+                  <View style={styles.bannerIndicatorDotGreen} />
+                  <Text style={styles.previewBannerLabel}>PREVIEW (STANDBY):</Text>
+                  <Text style={styles.previewBannerVal} numberOfLines={1}>
+                    {activePreviewCamera ? CAMERA_LABELS[activePreviewCamera] || activePreviewCamera.toUpperCase() : 'NONE'}
+                  </Text>
+                </View>
               </View>
-              <View style={styles.miniStatusBox}>
-                <Text style={styles.miniStatusLabel}>PREVIEW:</Text>
-                <Text style={[styles.miniStatusVal, styles.previewText]}>
-                  {activePreviewCamera ? CAMERA_LABELS[activePreviewCamera] || activePreviewCamera : 'NONE'}
-                </Text>
-              </View>
-              <View style={styles.miniActions}>
+
+              {/* CUT & FADE Buttons: Significantly enlarged tactile broadcast touch targets */}
+              <View style={styles.transitionActions}>
                 <TouchableOpacity
-                  style={[styles.miniCutBtn, !activePreviewCamera && styles.buttonDisabled]}
+                  style={[styles.largeCutBtn, !activePreviewCamera && styles.buttonDisabled]}
                   disabled={!activePreviewCamera}
                   onPress={handleTakeCut}
                   activeOpacity={0.8}
                 >
-                  <Text style={styles.miniCutBtnText}>CUT</Text>
+                  <Text style={styles.largeCutBtnText}>CUT</Text>
                 </TouchableOpacity>
+
                 <TouchableOpacity
-                  style={[styles.miniFadeBtn, !activePreviewCamera && styles.buttonDisabled]}
+                  style={[styles.largeFadeBtn, !activePreviewCamera && styles.buttonDisabled]}
                   disabled={!activePreviewCamera}
                   onPress={handleFade}
                   activeOpacity={0.8}
                 >
-                  <Text style={styles.miniFadeBtnText}>FADE</Text>
+                  <Text style={styles.largeFadeBtnText}>FADE</Text>
                 </TouchableOpacity>
               </View>
             </View>
@@ -722,63 +711,8 @@ export const DirectorView: React.FC = () => {
                 </View>
               )}
             </View>
-          </ScrollView>
-        </View>
 
-        {/* ==================================================================== */}
-        {/* TAB 2: CONTROL & VOZ                                                */}
-        {/* ==================================================================== */}
-        <View style={[styles.tabPane, activeTab !== 'control' && styles.tabPaneHidden]}>
-          <ScrollView
-            contentContainerStyle={styles.tabScrollContent}
-            showsVerticalScrollIndicator={false}
-          >
-            {/* Master Switcher Control Bar (Preview / Program / Take / Fade) */}
-            <View style={styles.switcherBar}>
-              <View style={styles.switcherStatusGroup}>
-                <View style={styles.switcherStatusBox}>
-                  <Text style={styles.switcherStatusLabel}>PROGRAM (LIVE / ON AIR)</Text>
-                  <Text style={[styles.switcherStatusValue, styles.programText]}>
-                    {activeProgramCamera ? CAMERA_LABELS[activeProgramCamera] || activeProgramCamera : 'NONE'}
-                  </Text>
-                </View>
-
-                <View style={styles.switcherStatusBox}>
-                  <Text style={styles.switcherStatusLabel}>PREVIEW (STANDBY)</Text>
-                  <Text style={[styles.switcherStatusValue, styles.previewText]}>
-                    {activePreviewCamera ? CAMERA_LABELS[activePreviewCamera] || activePreviewCamera : 'NONE'}
-                  </Text>
-                </View>
-              </View>
-
-              <View style={styles.switcherActions}>
-                <TouchableOpacity
-                  style={[
-                    styles.cutButton,
-                    !activePreviewCamera && styles.buttonDisabled,
-                  ]}
-                  disabled={!activePreviewCamera}
-                  onPress={handleTakeCut}
-                  activeOpacity={0.8}
-                >
-                  <Text style={styles.cutButtonText}>TAKE / CUT</Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  style={[
-                    styles.fadeButton,
-                    !activePreviewCamera && styles.buttonDisabled,
-                  ]}
-                  disabled={!activePreviewCamera}
-                  onPress={handleFade}
-                  activeOpacity={0.8}
-                >
-                  <Text style={styles.fadeButtonText}>FUNDIDO / FADE</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-
-            {/* Hands-Free Voice Command Recognition Panel (Director ONLY) */}
+            {/* Hands-Free Voice Command Recognition Panel (Integrated at Bottom of Tally Tab) */}
             <View style={styles.voicePanel}>
               <View style={styles.voiceHeader}>
                 <View style={styles.voiceTitleGroup}>
@@ -931,7 +865,7 @@ export const DirectorView: React.FC = () => {
         </View>
 
         {/* ==================================================================== */}
-        {/* TAB 3: CONTROL DE SONIDO                                            */}
+        {/* TAB 2: CONTROL DE SONIDO                                            */}
         {/* ==================================================================== */}
         <View style={[styles.tabPane, activeTab !== 'audio' && styles.tabPaneHidden]}>
           <AudioMixerView
@@ -944,7 +878,7 @@ export const DirectorView: React.FC = () => {
         </View>
 
         {/* ==================================================================== */}
-        {/* TAB 4: CONEXIÓN VMIX                                                */}
+        {/* TAB 3: CONEXIÓN VMIX                                                */}
         {/* ==================================================================== */}
         <View style={[styles.tabPane, activeTab !== 'vmix' && styles.tabPaneHidden]}>
           <ScrollView
@@ -1276,82 +1210,6 @@ const styles = StyleSheet.create({
   scrollContent: {
     padding: 16,
     paddingBottom: 16,
-  },
-  switcherBar: {
-    backgroundColor: '#16161E',
-    borderRadius: 10,
-    padding: 14,
-    marginBottom: 20,
-    borderWidth: 1,
-    borderColor: '#262633',
-  },
-  switcherStatusGroup: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 12,
-    gap: 10,
-  },
-  switcherStatusBox: {
-    flex: 1,
-    backgroundColor: '#0D0D12',
-    padding: 10,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#22222E',
-  },
-  switcherStatusLabel: {
-    color: '#8A8A9E',
-    fontSize: 11,
-    fontWeight: '700',
-    marginBottom: 4,
-  },
-  switcherStatusValue: {
-    fontSize: 20,
-    fontWeight: '900',
-  },
-  programText: {
-    color: '#FF1744',
-  },
-  previewText: {
-    color: '#00E676',
-  },
-  switcherActions: {
-    flexDirection: 'row',
-    gap: 10,
-  },
-  cutButton: {
-    flex: 1,
-    backgroundColor: '#D50000',
-    paddingVertical: 12,
-    paddingHorizontal: 10,
-    borderRadius: 8,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: '#FF1744',
-  },
-  cutButtonText: {
-    color: '#FFFFFF',
-    fontWeight: '900',
-    fontSize: 14,
-    letterSpacing: 0.8,
-  },
-  fadeButton: {
-    flex: 1,
-    backgroundColor: '#D97706',
-    paddingVertical: 12,
-    paddingHorizontal: 10,
-    borderRadius: 8,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: '#F59E0B',
-  },
-  fadeButtonText: {
-    color: '#FFFFFF',
-    fontWeight: '900',
-    fontSize: 14,
-    letterSpacing: 0.8,
   },
   buttonDisabled: {
     opacity: 0.4,
@@ -2309,63 +2167,131 @@ const styles = StyleSheet.create({
     paddingTop: 10,
     paddingBottom: 16,
   },
-  miniStatusBar: {
+  /* Top Status & Transition Bar Overhaul */
+  topTransitionBar: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    backgroundColor: '#13131A',
-    borderWidth: 1,
-    borderColor: '#22222E',
-    borderRadius: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    marginBottom: 10,
+    gap: 12,
+    marginBottom: 12,
+    flexWrap: 'wrap',
   },
-  miniStatusBox: {
+  tallyBannersContainer: {
+    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
+    gap: 10,
+    minWidth: 320,
   },
-  miniStatusLabel: {
-    color: '#7D7D94',
-    fontSize: 10,
-    fontWeight: '800',
-  },
-  miniStatusVal: {
-    fontSize: 13,
-    fontWeight: '900',
-  },
-  miniActions: {
+  tallyBannerBox: {
+    flex: 1,
+    minHeight: 50,
     flexDirection: 'row',
-    gap: 6,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 8,
+    gap: 8,
   },
-  miniCutBtn: {
+  programBannerBox: {
+    backgroundColor: 'rgba(220, 38, 38, 0.15)',
+    borderWidth: 2,
+    borderColor: '#DC2626',
+    // @ts-ignore web shadow
+    boxShadow: '0 0 16px rgba(220, 38, 38, 0.35)',
+  },
+  previewBannerBox: {
+    backgroundColor: 'rgba(22, 163, 74, 0.15)',
+    borderWidth: 2,
+    borderColor: '#16A34A',
+    // @ts-ignore web shadow
+    boxShadow: '0 0 16px rgba(22, 163, 74, 0.35)',
+  },
+  bannerIndicatorDotRed: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: '#FF1744',
+    // @ts-ignore web shadow
+    boxShadow: '0 0 8px #FF1744',
+  },
+  bannerIndicatorDotGreen: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: '#00E676',
+    // @ts-ignore web shadow
+    boxShadow: '0 0 8px #00E676',
+  },
+  programBannerLabel: {
+    color: '#FCA5A5',
+    fontSize: 12.5,
+    fontWeight: '800',
+    letterSpacing: 0.8,
+  },
+  programBannerVal: {
+    color: '#FFFFFF',
+    fontSize: 18,
+    fontWeight: '900',
+    letterSpacing: 1,
+  },
+  previewBannerLabel: {
+    color: '#86EFAC',
+    fontSize: 12.5,
+    fontWeight: '800',
+    letterSpacing: 0.8,
+  },
+  previewBannerVal: {
+    color: '#FFFFFF',
+    fontSize: 18,
+    fontWeight: '900',
+    letterSpacing: 1,
+  },
+  transitionActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  largeCutBtn: {
+    minHeight: 50,
+    height: 50,
+    minWidth: 105,
     backgroundColor: '#D50000',
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 4,
-    borderWidth: 1,
+    borderRadius: 8,
+    borderWidth: 2,
     borderColor: '#FF1744',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 20,
+    // @ts-ignore web shadow
+    boxShadow: '0 0 14px rgba(255, 23, 68, 0.45)',
   },
-  miniCutBtnText: {
+  largeCutBtnText: {
     color: '#FFFFFF',
-    fontSize: 10.5,
+    fontSize: 16,
     fontWeight: '900',
-    letterSpacing: 0.5,
+    letterSpacing: 1.5,
   },
-  miniFadeBtn: {
+  largeFadeBtn: {
+    minHeight: 50,
+    height: 50,
+    minWidth: 105,
     backgroundColor: '#D97706',
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 4,
-    borderWidth: 1,
+    borderRadius: 8,
+    borderWidth: 2,
     borderColor: '#F59E0B',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 20,
+    // @ts-ignore web shadow
+    boxShadow: '0 0 14px rgba(245, 158, 11, 0.45)',
   },
-  miniFadeBtnText: {
+  largeFadeBtnText: {
     color: '#FFFFFF',
-    fontSize: 10.5,
+    fontSize: 16,
     fontWeight: '900',
-    letterSpacing: 0.5,
+    letterSpacing: 1.5,
   },
   cameraMatrixHeader: {
     flexDirection: 'row',
