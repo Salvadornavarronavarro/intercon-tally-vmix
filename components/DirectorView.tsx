@@ -23,6 +23,7 @@ import {
 } from '../services/vmixService';
 import { BrandedTopBar } from './BrandedTopBar';
 import { CrewAuthModal } from './CrewAuthModal';
+import { AudioMixerView } from './AudioMixerView';
 
 const CAMERAS = ['cam1', 'cam2', 'cam3', 'cam4', 'cam5', 'cam6', 'cam7', 'cam8'];
 
@@ -69,7 +70,7 @@ export const DirectorView: React.FC = () => {
   const [cameraMapState, setCameraMapState] = useState<Record<string, string>>(vmixService.getConfig().cameraMap);
   const [cameraMuteMap, setCameraMuteMap] = useState<Record<string, boolean>>({});
   const [isAuthModalOpen, setIsAuthModalOpen] = useState<boolean>(false);
-  const [activeTab, setActiveTab] = useState<'tally' | 'control' | 'vmix'>('tally');
+  const [activeTab, setActiveTab] = useState<'tally' | 'control' | 'vmix' | 'audio'>('tally');
 
   // Initialize vMix config and start background status polling (every 3 seconds)
   useEffect(() => {
@@ -416,6 +417,25 @@ export const DirectorView: React.FC = () => {
               {vmixStatus.connected ? 'ONLINE' : 'OFFLINE'}
             </Text>
           </View>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={[
+            styles.tabButton,
+            activeTab === 'audio' && styles.tabButtonActive,
+          ]}
+          onPress={() => setActiveTab('audio')}
+          activeOpacity={0.8}
+        >
+          <Text style={styles.tabIcon}>🔊</Text>
+          <Text
+            style={[
+              styles.tabButtonText,
+              activeTab === 'audio' && styles.tabButtonTextActive,
+            ]}
+          >
+            CONTROL DE SONIDO
+          </Text>
         </TouchableOpacity>
       </View>
 
@@ -1064,6 +1084,18 @@ export const DirectorView: React.FC = () => {
               </View>
             </View>
           </ScrollView>
+        </View>
+
+        {/* ==================================================================== */}
+        {/* TAB 4: CONTROL DE SONIDO                                            */}
+        {/* ==================================================================== */}
+        <View style={[styles.tabPane, activeTab !== 'audio' && styles.tabPaneHidden]}>
+          <AudioMixerView
+            cameraMuteMap={cameraMuteMap}
+            onToggleCameraMute={handleToggleCameraMute}
+            activeProgramCamera={activeProgramCamera}
+            activePreviewCamera={activePreviewCamera}
+          />
         </View>
       </View>
 
@@ -2181,22 +2213,22 @@ const styles = StyleSheet.create({
     backgroundColor: '#111116',
     borderBottomWidth: 1,
     borderBottomColor: '#20202D',
-    paddingHorizontal: 12,
+    paddingHorizontal: 8,
     paddingVertical: 5,
-    gap: 8,
+    gap: 6,
   },
   tabButton: {
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 9,
-    paddingHorizontal: 8,
-    borderRadius: 7,
+    paddingVertical: 7,
+    paddingHorizontal: 6,
+    borderRadius: 6,
     backgroundColor: '#181822',
     borderWidth: 1,
     borderColor: '#262638',
-    gap: 6,
+    gap: 5,
   },
   tabButtonActive: {
     backgroundColor: '#232334',
@@ -2205,13 +2237,13 @@ const styles = StyleSheet.create({
     borderBottomColor: '#FF1744',
   },
   tabIcon: {
-    fontSize: 13,
+    fontSize: 12,
   },
   tabButtonText: {
     color: '#8E8EA8',
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '800',
-    letterSpacing: 0.6,
+    letterSpacing: 0.4,
   },
   tabButtonTextActive: {
     color: '#FFFFFF',
