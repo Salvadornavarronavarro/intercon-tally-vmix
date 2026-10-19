@@ -1099,22 +1099,24 @@ export const DirectorView: React.FC = () => {
         </View>
       </View>
 
-      {/* Bottom Director Talkback Controls */}
-      <View style={styles.bottomBar}>
-        <TouchableOpacity
-          style={[styles.talkButton, isMuted ? styles.talkButtonMuted : styles.talkButtonLive]}
-          onPress={toggleMute}
-          activeOpacity={0.85}
-        >
-          <Text style={styles.talkButtonIcon}>{isMuted ? '🔇' : '🎙️'}</Text>
-          <View>
-            <Text style={styles.talkButtonLabel}>DIRECTOR MIC</Text>
-            <Text style={styles.talkButtonState}>
-              {isMuted ? 'MUTED (TAP TO TALK)' : 'LIVE TO CREW (TAP TO MUTE)'}
-            </Text>
-          </View>
-        </TouchableOpacity>
-      </View>
+      {/* Bottom Director Talkback Controls (Hidden on 'audio' tab for 100% full-viewport broadcast console) */}
+      {activeTab !== 'audio' && (
+        <View style={styles.bottomBar}>
+          <TouchableOpacity
+            style={[styles.talkButton, isMuted ? styles.talkButtonMuted : styles.talkButtonLive]}
+            onPress={toggleMute}
+            activeOpacity={0.85}
+          >
+            <Text style={styles.talkButtonIcon}>{isMuted ? '🔇' : '🎙️'}</Text>
+            <View>
+              <Text style={styles.talkButtonLabel}>DIRECTOR MIC</Text>
+              <Text style={styles.talkButtonState}>
+                {isMuted ? 'MUTED (TAP TO TALK)' : 'LIVE TO CREW (TAP TO MUTE)'}
+              </Text>
+            </View>
+          </TouchableOpacity>
+        </View>
+      )}
 
       {/* Crew Identification / Auth Modal */}
       <CrewAuthModal

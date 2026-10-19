@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View,
   Text,
@@ -18,23 +18,30 @@ interface ChannelState {
   id: string; // 'cam1' ... 'cam8'
   num: number; // 1 .. 8
   volume: number; // 0 to 1 (0 = -inf, 0.75 = 0dB, 1.0 = +10dB)
-  pan: number; // -1 (full L) to +1 (full R), 0 = Center
+  pan: number; // -100 (full L) to +100 (full R), 0 = Center
   muted: boolean;
   solo: boolean; // PFL monitor
   meterLevel: number; // 0 to 1
   peakLevel: number;
 }
 
-const DB_MARKS = [
+// Exact dB graduation markings requested
+const DB_GRADUATION_MARKS = [
   { label: '+10', val: 1.0, color: '#FF1744' },
-  { label: '+6', val: 0.90, color: '#FF5252' },
-  { label: '0', val: 0.75, color: '#FFD600' },
-  { label: '-5', val: 0.60, color: '#00E676' },
-  { label: '-10', val: 0.45, color: '#00E676' },
-  { label: '-20', val: 0.30, color: '#00C853' },
-  { label: '-40', val: 0.15, color: '#00C853' },
-  { label: '-∞', val: 0.0, color: '#6A6A80' },
+  { label: '+6',  val: 0.91, color: '#FF3D00' },
+  { label: '+5',  val: 0.86, color: '#FF9100' },
+  { label: '0',   val: 0.75, color: '#FFD600', isUnity: true },
+  { label: '-5',  val: 0.65, color: '#AEEA00' },
+  { label: '-10', val: 0.55, color: '#00E676' },
+  { label: '-16', val: 0.44, color: '#00E676' },
+  { label: '-20', val: 0.35, color: '#00C853' },
+  { label: '-25', val: 0.26, color: '#00C853' },
+  { label: '-35', val: 0.17, color: '#009624' },
+  { label: '-40', val: 0.09, color: '#007E33' },
+  { label: '-∞',  val: 0.0,  color: '#555566' },
 ];
+
+const TOTAL_LED_SEGMENTS = 18;
 
 function volumeToDbString(vol: number): string {
   if (vol <= 0.02) return '-∞ dB';
@@ -49,9 +56,9 @@ function volumeToDbString(vol: number): string {
 }
 
 function panToString(pan: number): string {
-  if (Math.abs(pan) < 0.05) return 'C';
-  if (pan < 0) return `L${Math.round(Math.abs(pan) * 100)}`;
-  return `R${Math.round(pan * 100)}`;
+  if (Math.abs(pan) < 2) return 'C';
+  if (pan < 0) return `L ${Math.abs(Math.round(pan))}`;
+  return `R ${Math.round(pan)}`;
 }
 
 export const AudioMixerView: React.FC<AudioMixerViewProps> = ({
@@ -67,7 +74,7 @@ export const AudioMixerView: React.FC<AudioMixerViewProps> = ({
       return {
         id: camId,
         num: i + 1,
-        volume: 0.75, // Unity gain (0 dB)
+        volume: 0.75, // 0 dB unity gain default
         pan: 0, // Center
         muted: !!cameraMuteMap[camId],
         solo: false,
@@ -85,12 +92,13 @@ export const AudioMixerView: React.FC<AudioMixerViewProps> = ({
   const [masterPeakL, setMasterPeakL] = useState<number>(0.3);
   const [masterPeakR, setMasterPeakR] = useState<number>(0.3);
 
-  // Utility states
+  // Right-side utilities
   const [activeAux, setActiveAux] = useState<boolean>(false);
   const [activeGroups, setActiveGroups] = useState<boolean>(false);
 
-  // Dragging interaction state
-  const draggingTargetRef = useRef<string | null>(null);
+  // Pointer drag tracking
+  const draggingTargetRef = useRef<{ type: 'fader' | 'pan'; id: string; startY?: number; startVal?: number } | null>(null);
+  const lastKnobClickTimeRef = useRef<Record<string, number>>({});
 
   // Sync external mute map if changed
   useEffect(() => {
@@ -102,7 +110,7 @@ export const AudioMixerView: React.FC<AudioMixerViewProps> = ({
     );
   }, [cameraMuteMap]);
 
-  // Real-time Audio Meter Simulation & Ballistics
+  // Real-time Audio Meter Simulation & Ballistics (Voice/Mic dynamics)
   useEffect(() => {
     const timer = setInterval(() => {
       const now = Date.now();
@@ -114,19 +122,18 @@ export const AudioMixerView: React.FC<AudioMixerViewProps> = ({
           if (ch.muted || masterMuted) {
             return {
               ...ch,
-              meterLevel: Math.max(0, ch.meterLevel * 0.7),
-              peakLevel: Math.max(0, ch.peakLevel * 0.85),
+              meterLevel: Math.max(0, ch.meterLevel * 0.65),
+              peakLevel: Math.max(0, ch.peakLevel * 0.8),
             };
           }
 
-          // Generate realistic voice/intercom modulation
           const isPgm = activeProgramCamera === ch.id;
           const isPvw = activePreviewCamera === ch.id;
-          const boost = isPgm ? 0.35 : isPvw ? 0.18 : 0.05;
+          const boost = isPgm ? 0.38 : isPvw ? 0.18 : 0.05;
 
           const wave =
-            Math.sin(now / (240 + idx * 60)) * 0.22 +
-            Math.cos(now / (170 + idx * 40)) * 0.14 +
+            Math.sin(now / (230 + idx * 60)) * 0.23 +
+            Math.cos(now / (160 + idx * 35)) * 0.15 +
             (Math.random() - 0.5) * 0.12;
 
           const baseSignal = Math.max(0.04, Math.min(0.96, 0.45 + boost + wave));
@@ -146,25 +153,25 @@ export const AudioMixerView: React.FC<AudioMixerViewProps> = ({
 
         // Compute Master L & R
         if (masterMuted || count === 0) {
-          setMasterMeterL((prev) => Math.max(0, prev * 0.65));
-          setMasterMeterR((prev) => Math.max(0, prev * 0.65));
-          setMasterPeakL((prev) => Math.max(0, prev * 0.8));
-          setMasterPeakR((prev) => Math.max(0, prev * 0.8));
+          setMasterMeterL((p) => Math.max(0, p * 0.6));
+          setMasterMeterR((p) => Math.max(0, p * 0.6));
+          setMasterPeakL((p) => Math.max(0, p * 0.8));
+          setMasterPeakR((p) => Math.max(0, p * 0.8));
         } else {
           const avgLevel = (activeSum / Math.max(1, count)) * masterVolume;
-          const stereoPanVariance = (Math.random() - 0.5) * 0.07;
-          const targetL = Math.max(0.04, Math.min(1.0, avgLevel + stereoPanVariance));
-          const targetR = Math.max(0.04, Math.min(1.0, avgLevel - stereoPanVariance));
+          const panVariance = (Math.random() - 0.5) * 0.06;
+          const targetL = Math.max(0.04, Math.min(1.0, avgLevel + panVariance));
+          const targetR = Math.max(0.04, Math.min(1.0, avgLevel - panVariance));
 
           setMasterMeterL(targetL);
           setMasterMeterR(targetR);
-          setMasterPeakL((prev) => Math.max(targetL, prev * 0.96));
-          setMasterPeakR((prev) => Math.max(targetR, prev * 0.96));
+          setMasterPeakL((p) => Math.max(targetL, p * 0.96));
+          setMasterPeakR((p) => Math.max(targetR, p * 0.96));
         }
 
         return updated;
       });
-    }, 80);
+    }, 75);
 
     return () => clearInterval(timer);
   }, [activeProgramCamera, activePreviewCamera, masterMuted, masterVolume]);
@@ -185,32 +192,28 @@ export const AudioMixerView: React.FC<AudioMixerViewProps> = ({
     );
   };
 
-  const handleSetVolume = (camId: string, newVol: number) => {
+  const handleSetVolume = useCallback((camId: string, newVol: number) => {
     const clamped = Math.max(0, Math.min(1, newVol));
     setChannels((prev) =>
       prev.map((ch) => (ch.id === camId ? { ...ch, volume: clamped } : ch))
     );
-  };
+  }, []);
 
-  const handleStepPan = (camId: string, direction: -1 | 1 | 0) => {
+  const handleSetPan = useCallback((camId: string, newPan: number) => {
+    const clamped = Math.max(-100, Math.min(100, newPan));
     setChannels((prev) =>
-      prev.map((ch) => {
-        if (ch.id !== camId) return ch;
-        if (direction === 0) return { ...ch, pan: 0 };
-        const next = Math.max(-1, Math.min(1, ch.pan + direction * 0.25));
-        return { ...ch, pan: Math.round(next * 100) / 100 };
-      })
+      prev.map((ch) => (ch.id === camId ? { ...ch, pan: clamped } : ch))
     );
-  };
+  }, []);
 
   // Master Actions
   const handleToggleMasterMute = () => {
     setMasterMuted((prev) => !prev);
   };
 
-  const handleSetMasterVolume = (newVol: number) => {
+  const handleSetMasterVolume = useCallback((newVol: number) => {
     setMasterVolume(Math.max(0, Math.min(1, newVol)));
-  };
+  }, []);
 
   const handleAllMute = () => {
     const allCurrentlyMuted = channels.every((ch) => ch.muted);
@@ -245,34 +248,95 @@ export const AudioMixerView: React.FC<AudioMixerViewProps> = ({
     }
   };
 
-  // Render LED Ladder Bar
+  // Skeuomorphic Rotary Knob Interaction (Drag left/right or up/down, Double-click to center)
+  const handleKnobPointerDown = (e: any, camId: string, currentPan: number) => {
+    const now = Date.now();
+    const lastClick = lastKnobClickTimeRef.current[camId] || 0;
+    if (now - lastClick < 350) {
+      // Double click / tap detected: Reset to Center (0)
+      handleSetPan(camId, 0);
+      lastKnobClickTimeRef.current[camId] = 0;
+      return;
+    }
+    lastKnobClickTimeRef.current[camId] = now;
+
+    if (Platform.OS === 'web' && e) {
+      const nativeEvent = e.nativeEvent || e;
+      const clientX = nativeEvent.clientX !== undefined ? nativeEvent.clientX : nativeEvent.pageX;
+      const clientY = nativeEvent.clientY !== undefined ? nativeEvent.clientY : nativeEvent.pageY;
+
+      draggingTargetRef.current = {
+        type: 'pan',
+        id: camId,
+        startY: clientY,
+        startVal: currentPan,
+      };
+
+      const handleWindowPointerMove = (ev: MouseEvent | TouchEvent) => {
+        if (draggingTargetRef.current?.type === 'pan' && draggingTargetRef.current.id === camId) {
+          const moveY = (ev as MouseEvent).clientY ?? (ev as TouchEvent).touches?.[0]?.clientY ?? clientY;
+          const moveX = (ev as MouseEvent).clientX ?? (ev as TouchEvent).touches?.[0]?.clientX ?? clientX;
+          const delta = (clientX - moveX) * -1.8 + (clientY - moveY) * 1.8;
+          const start = draggingTargetRef.current.startVal ?? 0;
+          handleSetPan(camId, Math.max(-100, Math.min(100, Math.round(start + delta))));
+        }
+      };
+
+      const handleWindowPointerUp = () => {
+        draggingTargetRef.current = null;
+        window.removeEventListener('pointermove', handleWindowPointerMove);
+        window.removeEventListener('pointerup', handleWindowPointerUp);
+        window.removeEventListener('mousemove', handleWindowPointerMove);
+        window.removeEventListener('mouseup', handleWindowPointerUp);
+      };
+
+      window.addEventListener('pointermove', handleWindowPointerMove);
+      window.addEventListener('pointerup', handleWindowPointerUp);
+      window.addEventListener('mousemove', handleWindowPointerMove);
+      window.addEventListener('mouseup', handleWindowPointerUp);
+    }
+  };
+
+  // Render High-Fidelity Discrete LED Ladder
   const renderLedMeter = (level: number, peak: number) => {
-    const totalSegments = 14;
-    const activeSegments = Math.round(level * totalSegments);
-    const peakSegment = Math.min(totalSegments - 1, Math.round(peak * totalSegments));
+    const activeSegments = Math.round(level * TOTAL_LED_SEGMENTS);
+    const peakSegment = Math.min(TOTAL_LED_SEGMENTS - 1, Math.round(peak * TOTAL_LED_SEGMENTS));
 
     return (
       <View style={styles.meterTrack}>
-        {Array.from({ length: totalSegments }).map((_, i) => {
-          const segIdx = totalSegments - 1 - i; // Top to bottom
+        {Array.from({ length: TOTAL_LED_SEGMENTS }).map((_, i) => {
+          const segIdx = TOTAL_LED_SEGMENTS - 1 - i; // Top (17) to Bottom (0)
           const isLit = segIdx < activeSegments;
-          const isPeak = segIdx === peakSegment && peak > 0.05;
+          const isPeak = segIdx === peakSegment && peak > 0.04;
 
-          let segColor = '#00E676'; // Normal Green
-          if (segIdx >= 12) {
-            segColor = '#FF1744'; // Clip / Red (+10dB, +6dB)
-          } else if (segIdx >= 9) {
-            segColor = '#FFD600'; // Amber / Headroom (0dB to -5dB)
+          // Segment Colors:
+          // Top 4 segments (14 to 17): Bright Peak Red (+0 to +10 dB)
+          // Middle 4 segments (10 to 13): Warm Amber / Yellow (-10 to 0 dB)
+          // Lower 10 segments (0 to 9): Deep Green (-inf to -10 dB)
+          let activeColor = '#00E676';
+          let offColor = '#0D2315';
+          let glowShadow = '0 0 6px rgba(0, 230, 118, 0.85)';
+
+          if (segIdx >= 14) {
+            activeColor = '#FF1744';
+            offColor = '#2B0E12';
+            glowShadow = '0 0 8px rgba(255, 23, 68, 0.95)';
+          } else if (segIdx >= 10) {
+            activeColor = '#FFD600';
+            offColor = '#2A2209';
+            glowShadow = '0 0 7px rgba(255, 214, 0, 0.9)';
           }
 
           return (
             <View
               key={segIdx}
               style={[
-                styles.meterLed,
-                isLit && { backgroundColor: segColor },
-                !isLit && isPeak && { backgroundColor: segColor, opacity: 0.9 },
-                !isLit && !isPeak && styles.meterLedOff,
+                styles.meterLedBlock,
+                {
+                  backgroundColor: isLit || isPeak ? activeColor : offColor,
+                  // @ts-ignore web boxShadow
+                  boxShadow: isLit || isPeak ? glowShadow : 'none',
+                },
               ]}
             />
           );
@@ -292,10 +356,10 @@ export const AudioMixerView: React.FC<AudioMixerViewProps> = ({
 
         <View style={styles.ribbonRight}>
           <View style={styles.badgePfl}>
-            <Text style={styles.badgePflText}>PFL AUDIO MATRIX</Text>
+            <Text style={styles.badgePflText}>PFL MATRIX</Text>
           </View>
           <View style={styles.badgeSampleRate}>
-            <Text style={styles.badgeSampleRateText}>48 kHz / 24-BIT DIGITAL BUS</Text>
+            <Text style={styles.badgeSampleRateText}>48 kHz / 24-BIT DIGITAL AUDIO BUS</Text>
           </View>
         </View>
       </View>
@@ -309,6 +373,9 @@ export const AudioMixerView: React.FC<AudioMixerViewProps> = ({
           {channels.map((ch) => {
             const isPgm = activeProgramCamera === ch.id;
             const isPvw = activePreviewCamera === ch.id;
+
+            // Rotation angle: -100 (L) = -135deg, 0 (C) = 0deg, +100 (R) = +135deg
+            const knobAngle = (ch.pan / 100) * 135;
 
             return (
               <View
@@ -337,45 +404,46 @@ export const AudioMixerView: React.FC<AudioMixerViewProps> = ({
                   ) : null}
                 </View>
 
-                {/* 2. PANORAMA ROTARY KNOB: marked with 'L' and 'R' */}
+                {/* 2. REALISTIC SKEUOMORPHIC ROTARY PAN KNOB (Marked 'L' and 'R' with center dot) */}
                 <View style={styles.panSection}>
-                  <View style={styles.panLabelRow}>
-                    <TouchableOpacity
-                      onPress={() => handleStepPan(ch.id, -1)}
-                      style={styles.panStepBtn}
-                      activeOpacity={0.7}
-                    >
-                      <Text style={styles.panMarkerL}>L</Text>
-                    </TouchableOpacity>
+                  <View style={styles.panDialSurround}>
+                    {/* Top center reference dot at 12 o'clock */}
+                    <View style={styles.panCenterRefDot} />
 
-                    <TouchableOpacity
-                      onPress={() => handleStepPan(ch.id, 0)}
-                      style={styles.panKnobDial}
-                      activeOpacity={0.8}
-                    >
-                      {/* Rotary tick indicator rotating based on pan */}
-                      <View
-                        style={[
-                          styles.panKnobIndicator,
-                          {
-                            transform: [{ rotate: `${ch.pan * 65}deg` }],
-                          },
-                        ]}
-                      />
-                    </TouchableOpacity>
+                    <View style={styles.panKnobRow}>
+                      <Text style={styles.panLabelL}>L</Text>
 
-                    <TouchableOpacity
-                      onPress={() => handleStepPan(ch.id, 1)}
-                      style={styles.panStepBtn}
-                      activeOpacity={0.7}
-                    >
-                      <Text style={styles.panMarkerR}>R</Text>
-                    </TouchableOpacity>
+                      {/* 3D Skeuomorphic Metallic Dial */}
+                      <TouchableOpacity
+                        style={styles.knob3DOuter}
+                        activeOpacity={0.9}
+                        // @ts-ignore
+                        onPointerDown={(e: any) => handleKnobPointerDown(e, ch.id, ch.pan)}
+                      >
+                        {/* Cylindrical beveled dial body */}
+                        <View style={styles.knob3DBezel}>
+                          <View
+                            style={[
+                              styles.knob3DFace,
+                              {
+                                transform: [{ rotate: `${knobAngle}deg` }],
+                              },
+                            ]}
+                          >
+                            {/* Crisp metallic white pointer line indicating angle */}
+                            <View style={styles.knobPointerLine} />
+                          </View>
+                        </View>
+                      </TouchableOpacity>
+
+                      <Text style={styles.panLabelR}>R</Text>
+                    </View>
                   </View>
-                  <Text style={styles.panValueText}>{panToString(ch.pan)}</Text>
+
+                  <Text style={styles.panDigitalText}>{panToString(ch.pan)}</Text>
                 </View>
 
-                {/* 3. MUTE BUTTON: bright red toggle when active */}
+                {/* 3. PROMINENT MUTE BUTTON: Glowing neon-red fill when engaged */}
                 <TouchableOpacity
                   style={[
                     styles.muteButton,
@@ -394,28 +462,43 @@ export const AudioMixerView: React.FC<AudioMixerViewProps> = ({
                   </Text>
                 </TouchableOpacity>
 
-                {/* 4. VERTICAL FADER + 5. REALTIME AUDIO METER LED LADDER */}
+                {/* 4. HARDWARE BROADCAST FADER & MULTI-SEGMENT LED LADDER */}
                 <View style={styles.faderAndMeterArea}>
-                  {/* dB Scale Markings */}
+                  {/* Detailed dB Graduation Markings */}
                   <View style={styles.dbScaleColumn}>
-                    {DB_MARKS.map((m) => (
-                      <Text key={m.label} style={[styles.dbLabelText, { color: m.color }]}>
-                        {m.label}
-                      </Text>
+                    {DB_GRADUATION_MARKS.map((m) => (
+                      <View key={m.label} style={styles.dbMarkRow}>
+                        <Text
+                          style={[
+                            styles.dbLabelText,
+                            { color: m.color },
+                            m.isUnity && styles.dbLabelUnity,
+                          ]}
+                        >
+                          {m.label}
+                        </Text>
+                        <View
+                          style={[
+                            styles.dbTickMark,
+                            { backgroundColor: m.color },
+                            m.isUnity && styles.dbTickUnity,
+                          ]}
+                        />
+                      </View>
                     ))}
                   </View>
 
-                  {/* Fader Track & Thumb */}
+                  {/* Recessed Vertical Slot Track & Metallic Fader Cap */}
                   <View
                     style={styles.faderTrackContainer}
                     // @ts-ignore: React Native Web pointer event
                     onPointerDown={(e: any) => {
-                      draggingTargetRef.current = ch.id;
+                      draggingTargetRef.current = { type: 'fader', id: ch.id };
                       updateFaderFromPointer(e, ch.id);
                     }}
                     // @ts-ignore: React Native Web pointer event
                     onPointerMove={(e: any) => {
-                      if (draggingTargetRef.current === ch.id) {
+                      if (draggingTargetRef.current?.type === 'fader' && draggingTargetRef.current.id === ch.id) {
                         updateFaderFromPointer(e, ch.id);
                       }
                     }}
@@ -424,38 +507,45 @@ export const AudioMixerView: React.FC<AudioMixerViewProps> = ({
                       draggingTargetRef.current = null;
                     }}
                   >
+                    {/* Deep Recessed Slot Track */}
                     <View style={styles.faderSlotTrack}>
-                      {/* Unity gain mark (0dB) */}
-                      <View style={styles.faderUnityLine} />
+                      {/* Unity Gain Notch (0 dB) */}
+                      <View style={styles.faderUnityNotch} />
                     </View>
 
-                    {/* Draggable/Interactive Fader Cap */}
+                    {/* High-Fidelity Silver Brushed Aluminum Fader Cap */}
                     <View
                       style={[
-                        styles.faderCap,
+                        styles.faderCapMetallic,
                         {
-                          bottom: `${ch.volume * 82}%`,
+                          bottom: `${ch.volume * 84}%`,
                         },
                       ]}
                     >
-                      <View style={styles.faderCapRidgeTop} />
-                      <View style={styles.faderCapCenterLine} />
-                      <View style={styles.faderCapRidgeBottom} />
+                      {/* Top Beveled Highlight */}
+                      <View style={styles.faderCapTopBevel} />
+                      {/* Grip Grooves */}
+                      <View style={styles.faderCapGripGroove} />
+                      {/* Center Horizontal Index Line */}
+                      <View style={styles.faderCapCenterIndexLine} />
+                      <View style={styles.faderCapGripGroove} />
+                      {/* Bottom Beveled Shadow */}
+                      <View style={styles.faderCapBottomBevel} />
                     </View>
                   </View>
 
-                  {/* Realtime Audio Meter LED Ladder */}
+                  {/* Multi-Segment LED Ladder VU Meter */}
                   <View style={styles.meterColumn}>
                     {renderLedMeter(ch.meterLevel, ch.peakLevel)}
                   </View>
                 </View>
 
-                {/* Fader dB Readout */}
+                {/* Digital Gain Readout */}
                 <View style={styles.dbReadoutBox}>
                   <Text style={styles.dbReadoutText}>{volumeToDbString(ch.volume)}</Text>
                 </View>
 
-                {/* 6. BOTTOM MONITORING BUTTON: strictly 'CAM 1' to 'CAM 8' (zero intercom references) */}
+                {/* 5. BOTTOM MONITORING BUTTON: Strictly 'CAM 1' to 'CAM 8' (zero intercom references) */}
                 <TouchableOpacity
                   style={[
                     styles.monitorButton,
@@ -480,7 +570,7 @@ export const AudioMixerView: React.FC<AudioMixerViewProps> = ({
         </View>
 
         {/* ================================================================== */}
-        {/* DEDICATED MASTER SECTION (Red accent border)                       */}
+        {/* DEDICATED MASTER SECTION (Red Accent Border)                       */}
         {/* ================================================================== */}
         <View style={styles.masterContainer}>
           {/* Master Section Header */}
@@ -493,7 +583,7 @@ export const AudioMixerView: React.FC<AudioMixerViewProps> = ({
             </View>
           </View>
 
-          {/* Master VU & Faders Row */}
+          {/* Master VU & Faders Area */}
           <View style={styles.masterMixArea}>
             {/* Left VU Meter */}
             <View style={styles.masterMeterBlock}>
@@ -501,10 +591,17 @@ export const AudioMixerView: React.FC<AudioMixerViewProps> = ({
               {renderLedMeter(masterMeterL, masterPeakL)}
             </View>
 
-            {/* Central dB Scale */}
+            {/* Central Detailed dB Scale */}
             <View style={styles.masterDbScaleColumn}>
-              {DB_MARKS.map((m) => (
-                <Text key={m.label} style={[styles.masterDbText, { color: m.color }]}>
+              {DB_GRADUATION_MARKS.map((m) => (
+                <Text
+                  key={m.label}
+                  style={[
+                    styles.masterDbText,
+                    { color: m.color },
+                    m.isUnity && styles.dbLabelUnity,
+                  ]}
+                >
                   {m.label}
                 </Text>
               ))}
@@ -521,12 +618,12 @@ export const AudioMixerView: React.FC<AudioMixerViewProps> = ({
               style={styles.masterDualFadersColumn}
               // @ts-ignore: React Native Web pointer event
               onPointerDown={(e: any) => {
-                draggingTargetRef.current = 'master';
+                draggingTargetRef.current = { type: 'fader', id: 'master' };
                 updateFaderFromPointer(e);
               }}
               // @ts-ignore: React Native Web pointer event
               onPointerMove={(e: any) => {
-                if (draggingTargetRef.current === 'master') {
+                if (draggingTargetRef.current?.type === 'fader' && draggingTargetRef.current.id === 'master') {
                   updateFaderFromPointer(e);
                 }
               }}
@@ -542,18 +639,18 @@ export const AudioMixerView: React.FC<AudioMixerViewProps> = ({
                   <View style={styles.faderSlotTrack} />
                 </View>
 
-                {/* Ganged Stereo Fader Handle */}
+                {/* Ganged Stereo Brushed Fader Handle with Dual Red Bridge */}
                 <View
                   style={[
                     styles.masterFaderCapGanged,
                     {
-                      bottom: `${masterVolume * 82}%`,
+                      bottom: `${masterVolume * 84}%`,
                     },
                   ]}
                 >
-                  <View style={styles.masterCapStripe} />
+                  <View style={styles.masterCapBridgeLine} />
                   <Text style={styles.masterCapText}>STEREO</Text>
-                  <View style={styles.masterCapStripe} />
+                  <View style={styles.masterCapBridgeLine} />
                 </View>
               </View>
             </View>
@@ -657,7 +754,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#1E1E2C',
     borderRadius: 7,
-    paddingHorizontal: 10,
+    paddingHorizontal: 12,
     paddingVertical: 5,
     marginBottom: 6,
   },
@@ -731,20 +828,20 @@ const styles = StyleSheet.create({
   },
   stripCardPgm: {
     borderColor: '#FF1744',
-    backgroundColor: '#180E12',
+    backgroundColor: '#1A0E13',
   },
   stripCardPvw: {
     borderColor: '#00E676',
-    backgroundColor: '#0D1612',
+    backgroundColor: '#0D1713',
   },
   stripHeader: {
     width: '100%',
     alignItems: 'center',
-    marginBottom: 3,
+    marginBottom: 2,
   },
   chNumberBadge: {
     width: '100%',
-    backgroundColor: '#1C1C28',
+    backgroundColor: '#1A1A26',
     borderRadius: 4,
     paddingVertical: 3,
     alignItems: 'center',
@@ -777,79 +874,114 @@ const styles = StyleSheet.create({
     fontSize: 7,
     fontWeight: '900',
   },
-  /* Pan Rotary Section */
+  /* 3D Skeuomorphic Rotary Pan Section */
   panSection: {
     width: '100%',
     alignItems: 'center',
-    marginVertical: 3,
+    marginVertical: 2,
   },
-  panLabelRow: {
+  panDialSurround: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    position: 'relative',
+  },
+  panCenterRefDot: {
+    width: 3.5,
+    height: 3.5,
+    borderRadius: 1.75,
+    backgroundColor: '#FFD600',
+    marginBottom: 2,
+    opacity: 0.9,
+  },
+  panKnobRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 3,
+    gap: 4,
   },
-  panStepBtn: {
-    padding: 2,
-  },
-  panMarkerL: {
-    color: '#7C7C94',
+  panLabelL: {
+    color: '#7E8096',
     fontSize: 8.5,
     fontWeight: '900',
   },
-  panMarkerR: {
-    color: '#7C7C94',
+  panLabelR: {
+    color: '#7E8096',
     fontSize: 8.5,
     fontWeight: '900',
   },
-  panKnobDial: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
-    backgroundColor: '#232332',
-    borderWidth: 2,
-    borderColor: '#39394E',
+  knob3DOuter: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: '#15161E',
+    borderWidth: 1.5,
+    borderColor: '#2F3242',
+    alignItems: 'center',
+    justifyContent: 'center',
+    // @ts-ignore web shadow
+    boxShadow: '0 3px 6px rgba(0,0,0,0.85), inset 0 1px 1px rgba(255,255,255,0.12)',
+    cursor: 'pointer' as any,
+  },
+  knob3DBezel: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: '#20222D',
+    borderWidth: 1,
+    borderColor: '#3D4052',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  knob3DFace: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: '#12131A',
     alignItems: 'center',
     justifyContent: 'flex-start',
-    paddingTop: 2,
+    paddingTop: 1.5,
   },
-  panKnobIndicator: {
+  knobPointerLine: {
     width: 2.5,
     height: 8,
-    backgroundColor: '#00E676',
-    borderRadius: 1.5,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 1.25,
+    // @ts-ignore web shadow
+    boxShadow: '0 0 3px rgba(255, 255, 255, 0.9)',
   },
-  panValueText: {
-    color: '#A0A0BA',
+  panDigitalText: {
+    color: '#9E9EB6',
     fontSize: 8,
-    fontWeight: '700',
-    marginTop: 1,
+    fontWeight: '800',
+    marginTop: 2,
   },
   /* Mute Button */
   muteButton: {
     width: '100%',
-    paddingVertical: 4,
+    paddingVertical: 5,
     borderRadius: 4,
-    borderWidth: 1,
+    borderWidth: 1.5,
     alignItems: 'center',
     justifyContent: 'center',
     marginVertical: 3,
   },
   muteButtonIdle: {
-    backgroundColor: '#1B1B26',
-    borderColor: '#2E2E40',
+    backgroundColor: '#181924',
+    borderColor: '#2D3042',
   },
   muteButtonActive: {
-    backgroundColor: '#D50000',
-    borderColor: '#FF1744',
+    backgroundColor: '#FF1744',
+    borderColor: '#FF5252',
+    // @ts-ignore web glow
+    boxShadow: '0 0 10px rgba(255, 23, 68, 0.85)',
   },
   muteButtonText: {
     fontSize: 9,
     fontWeight: '900',
-    letterSpacing: 0.5,
+    letterSpacing: 0.6,
   },
   muteTextIdle: {
-    color: '#A8A8C0',
+    color: '#8C8EA6',
   },
   muteTextActive: {
     color: '#FFFFFF',
@@ -862,103 +994,136 @@ const styles = StyleSheet.create({
     alignItems: 'stretch',
     justifyContent: 'center',
     marginVertical: 4,
-    gap: 3,
+    gap: 4,
   },
   dbScaleColumn: {
     justifyContent: 'space-between',
     alignItems: 'flex-end',
-    paddingVertical: 2,
-    width: 18,
+    paddingVertical: 3,
+    width: 20,
+  },
+  dbMarkRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    gap: 2,
+    width: '100%',
   },
   dbLabelText: {
     fontSize: 7,
     fontWeight: '800',
+  },
+  dbLabelUnity: {
+    fontSize: 8,
+    fontWeight: '900',
+  },
+  dbTickMark: {
+    width: 3,
+    height: 1,
+    opacity: 0.7,
+  },
+  dbTickUnity: {
+    width: 5,
+    height: 1.5,
+    opacity: 1,
   },
   faderTrackContainer: {
     flex: 1,
     position: 'relative',
     alignItems: 'center',
     justifyContent: 'center',
-    minWidth: 22,
+    minWidth: 26,
     cursor: 'pointer' as any,
   },
   faderSlotTrack: {
-    width: 4,
+    width: 5,
     height: '100%',
-    backgroundColor: '#09090D',
-    borderRadius: 2,
+    backgroundColor: '#060609',
+    borderRadius: 2.5,
     borderWidth: 1,
-    borderColor: '#1D1D28',
+    borderColor: '#1A1C28',
     position: 'relative',
+    // @ts-ignore web shadow
+    boxShadow: 'inset 0 1px 4px rgba(0,0,0,0.9)',
   },
-  faderUnityLine: {
+  faderUnityNotch: {
     position: 'absolute',
     bottom: '75%',
-    left: -4,
-    right: -4,
+    left: -5,
+    right: -5,
     height: 2,
     backgroundColor: '#FFD600',
-    opacity: 0.6,
+    opacity: 0.75,
   },
-  faderCap: {
+  /* High-Fidelity Silver Brushed Aluminum Fader Cap */
+  faderCapMetallic: {
     position: 'absolute',
-    width: 24,
-    height: 34,
-    backgroundColor: '#2A2A3A',
-    borderRadius: 3,
+    width: 28,
+    height: 44,
+    backgroundColor: '#B4B4BE',
+    borderRadius: 3.5,
     borderWidth: 1.5,
-    borderColor: '#4A4A62',
-    justifyContent: 'center',
+    borderColor: '#E2E2EA',
+    justifyContent: 'space-between',
     alignItems: 'center',
+    paddingVertical: 3,
+    // @ts-ignore web shadow
+    boxShadow: '0 5px 12px rgba(0,0,0,0.9), inset 0 1px 1px rgba(255,255,255,0.8), inset 0 -1px 2px rgba(0,0,0,0.5)',
   },
-  faderCapRidgeTop: {
-    width: 12,
-    height: 1.5,
-    backgroundColor: '#3D3D52',
-    marginBottom: 2,
-  },
-  faderCapCenterLine: {
-    width: 16,
+  faderCapTopBevel: {
+    width: '100%',
     height: 2,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: '#F0F0F8',
+    opacity: 0.9,
   },
-  faderCapRidgeBottom: {
-    width: 12,
+  faderCapGripGroove: {
+    width: 14,
     height: 1.5,
-    backgroundColor: '#3D3D52',
-    marginTop: 2,
+    backgroundColor: '#4E505E',
+    borderRadius: 0.75,
+  },
+  faderCapCenterIndexLine: {
+    width: 20,
+    height: 2.5,
+    backgroundColor: '#1E202A',
+    borderRadius: 1,
+  },
+  faderCapBottomBevel: {
+    width: '100%',
+    height: 2,
+    backgroundColor: '#6A6C7A',
+    opacity: 0.8,
   },
   meterColumn: {
-    width: 7,
+    width: 9,
     alignItems: 'center',
     justifyContent: 'center',
   },
   meterTrack: {
-    width: 6,
+    width: 8,
     flex: 1,
     height: '100%',
-    backgroundColor: '#08080C',
+    backgroundColor: '#07080D',
     borderRadius: 2,
-    padding: 0.5,
+    padding: 1,
     justifyContent: 'space-between',
     borderWidth: 1,
-    borderColor: '#181822',
+    borderColor: '#191B26',
+    // @ts-ignore web shadow
+    boxShadow: 'inset 0 1px 3px rgba(0,0,0,0.8)',
   },
-  meterLed: {
+  meterLedBlock: {
     width: '100%',
     flex: 1,
     borderRadius: 1,
     marginVertical: 0.5,
   },
-  meterLedOff: {
-    backgroundColor: '#13131D',
-  },
-  /* dB Readout */
+  /* Digital Gain Readout */
   dbReadoutBox: {
     width: '100%',
-    backgroundColor: '#0D0D14',
+    backgroundColor: '#0A0B10',
     borderWidth: 1,
-    borderColor: '#1D1D28',
+    borderColor: '#1C1D2A',
     borderRadius: 3,
     paddingVertical: 2,
     alignItems: 'center',
@@ -966,8 +1131,8 @@ const styles = StyleSheet.create({
   },
   dbReadoutText: {
     color: '#00E676',
-    fontSize: 8,
-    fontWeight: '800',
+    fontSize: 8.5,
+    fontWeight: '900',
     fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
   },
   /* Bottom Monitoring Button */
@@ -976,16 +1141,18 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#191924',
+    backgroundColor: '#181924',
     borderWidth: 1,
-    borderColor: '#29293C',
+    borderColor: '#292B3C',
     borderRadius: 4,
-    paddingVertical: 4,
+    paddingVertical: 5,
     gap: 3,
   },
   monitorButtonActive: {
     backgroundColor: '#004D40',
     borderColor: '#00E676',
+    // @ts-ignore web glow
+    boxShadow: '0 0 8px rgba(0, 230, 118, 0.6)',
   },
   monitorHeadphoneIcon: {
     fontSize: 8.5,
@@ -1003,14 +1170,16 @@ const styles = StyleSheet.create({
   /* MASTER SECTION (Red Accent Border)                                  */
   /* ================================================================== */
   masterContainer: {
-    width: 175,
-    backgroundColor: '#120E12',
+    width: 180,
+    backgroundColor: '#120D12',
     borderRadius: 7,
     borderWidth: 2,
     borderColor: '#FF1744',
     padding: 6,
     justifyContent: 'space-between',
     alignItems: 'center',
+    // @ts-ignore web shadow
+    boxShadow: '0 0 12px rgba(255, 23, 68, 0.25)',
   },
   masterHeader: {
     width: '100%',
@@ -1064,10 +1233,10 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     paddingVertical: 10,
-    width: 20,
+    width: 22,
   },
   masterDbText: {
-    fontSize: 7.5,
+    fontSize: 7,
     fontWeight: '800',
   },
   masterDualFadersColumn: {
@@ -1079,32 +1248,34 @@ const styles = StyleSheet.create({
   },
   masterDualTrackSlot: {
     flexDirection: 'row',
-    gap: 7,
+    gap: 8,
     height: '100%',
     alignItems: 'center',
   },
   masterFaderCapGanged: {
     position: 'absolute',
-    width: 44,
-    height: 38,
-    backgroundColor: '#B71C1C',
+    width: 48,
+    height: 44,
+    backgroundColor: '#C5112E',
     borderRadius: 4,
-    borderWidth: 2,
+    borderWidth: 1.5,
     borderColor: '#FF5252',
-    justifyContent: 'center',
+    justifyContent: 'space-between',
     alignItems: 'center',
+    paddingVertical: 4,
+    // @ts-ignore web shadow
+    boxShadow: '0 5px 14px rgba(255, 23, 68, 0.6), inset 0 1px 1px rgba(255,255,255,0.6)',
   },
-  masterCapStripe: {
-    width: 24,
-    height: 1.5,
+  masterCapBridgeLine: {
+    width: 28,
+    height: 2,
     backgroundColor: '#FF8A80',
-    marginVertical: 2,
   },
   masterCapText: {
     color: '#FFFFFF',
     fontSize: 7.5,
     fontWeight: '900',
-    letterSpacing: 0.5,
+    letterSpacing: 0.6,
   },
   masterDbReadout: {
     width: '100%',
@@ -1134,12 +1305,14 @@ const styles = StyleSheet.create({
     marginBottom: 5,
   },
   masterMuteBtnIdle: {
-    backgroundColor: '#1F1418',
+    backgroundColor: '#1E1317',
     borderColor: '#4A2328',
   },
   masterMuteBtnActive: {
-    backgroundColor: '#D50000',
-    borderColor: '#FF1744',
+    backgroundColor: '#FF1744',
+    borderColor: '#FF5252',
+    // @ts-ignore web glow
+    boxShadow: '0 0 12px rgba(255, 23, 68, 0.85)',
   },
   masterMuteIcon: {
     fontSize: 11,
@@ -1161,9 +1334,9 @@ const styles = StyleSheet.create({
   },
   utilityBtn: {
     flex: 1,
-    backgroundColor: '#1D1D28',
+    backgroundColor: '#1C1D28',
     borderWidth: 1,
-    borderColor: '#303042',
+    borderColor: '#303244',
     borderRadius: 4,
     paddingVertical: 5,
     alignItems: 'center',
@@ -1186,8 +1359,10 @@ const styles = StyleSheet.create({
     borderColor: '#541F25',
   },
   utilityAllMuteActive: {
-    backgroundColor: '#D50000',
-    borderColor: '#FF1744',
+    backgroundColor: '#FF1744',
+    borderColor: '#FF5252',
+    // @ts-ignore web glow
+    boxShadow: '0 0 8px rgba(255, 23, 68, 0.75)',
   },
   allMuteBtnText: {
     color: '#FF5252',
