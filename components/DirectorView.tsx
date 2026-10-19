@@ -2330,10 +2330,14 @@ const styles = StyleSheet.create({
   },
   mainContainer: {
     flex: 1,
+    height: '100%',
+    minHeight: 0,
     overflow: 'hidden',
   },
   tabPane: {
     flex: 1,
+    height: '100%',
+    minHeight: 0,
   },
   tabPaneHidden: {
     display: 'none',

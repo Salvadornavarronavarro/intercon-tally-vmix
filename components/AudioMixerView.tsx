@@ -1173,6 +1173,7 @@ export const AudioMixerView: React.FC<AudioMixerViewProps> = ({
 const styles = StyleSheet.create({
   consoleContainer: {
     flex: 1,
+    height: '100%',
     backgroundColor: '#0A0A0E',
     padding: 8,
     justifyContent: 'space-between',
@@ -1240,6 +1241,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: 6,
     alignItems: 'stretch',
+    minHeight: 460,
   },
   /* Channels Rack */
   channelsRackWrapper: {
@@ -1258,6 +1260,7 @@ const styles = StyleSheet.create({
     alignItems: 'stretch',
     minWidth: '100%',
     height: '100%',
+    flexGrow: 1,
   },
   stripCard: {
     flex: 1,
@@ -1271,6 +1274,8 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     height: '100%',
+    minHeight: 460,
+    alignSelf: 'stretch',
   },
   stripCardPgm: {
     borderColor: '#FF1744',
@@ -1762,6 +1767,9 @@ const styles = StyleSheet.create({
   /* ================================================================== */
   masterContainer: {
     width: 185,
+    height: '100%',
+    minHeight: 460,
+    alignSelf: 'stretch',
     backgroundColor: '#120D12',
     borderRadius: 7,
     borderWidth: 2,
