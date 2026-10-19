@@ -369,18 +369,44 @@ export const AudioMixerView: React.FC<AudioMixerViewProps> = ({
     );
   };
 
-  // Pointer / Touch Fader Interactions
-  const updateFaderFromPointer = (e: any, targetId?: string) => {
+  // Robust Fader Drag Interactions with Window Listeners, Pointer Capture, and Clamped Travel
+  const handleFaderPointerDown = (e: any, targetId: string) => {
     if (Platform.OS === 'web' && e) {
       const nativeEvent = e.nativeEvent || e;
-      const targetElement = e.currentTarget || e.target;
-      if (targetElement && targetElement.getBoundingClientRect) {
-        const rect = targetElement.getBoundingClientRect();
-        const clientY = nativeEvent.clientY !== undefined ? nativeEvent.clientY : nativeEvent.pageY;
-        const relativeY = clientY - rect.top;
-        const ratio = 1 - Math.max(0, Math.min(1, relativeY / rect.height));
+      if (nativeEvent.preventDefault && typeof nativeEvent.preventDefault === 'function') {
+        try {
+          nativeEvent.preventDefault();
+        } catch {}
+      }
 
-        if (!targetId || targetId === 'master') {
+      const pointerId = nativeEvent.pointerId !== undefined ? nativeEvent.pointerId : e.pointerId;
+
+      let trackElement: HTMLElement | null = (e.currentTarget || e.target) as HTMLElement | null;
+      // If clicked element is a sub-element (notch, cap, text label) smaller than the track, ascend to container
+      while (trackElement && trackElement.parentElement && trackElement.getBoundingClientRect().height < 80) {
+        trackElement = trackElement.parentElement;
+      }
+
+      const captureTarget: any = (e.target && typeof e.target.setPointerCapture === 'function')
+        ? e.target
+        : (trackElement && typeof trackElement.setPointerCapture === 'function' ? trackElement : null);
+
+      if (captureTarget && pointerId !== undefined) {
+        try {
+          captureTarget.setPointerCapture(pointerId);
+        } catch {}
+      }
+
+      const trackRect = trackElement?.getBoundingClientRect ? trackElement.getBoundingClientRect() : null;
+
+      const updateVolumeFromY = (clientY: number) => {
+        if (!trackRect || trackRect.height <= 0) return;
+        const relativeY = clientY - trackRect.top;
+        // Strictly clamp vertical travel between 0% (-inf / 0.0) and 100% (+10 dB / 1.0)
+        const clampedFraction = Math.max(0, Math.min(1, relativeY / trackRect.height));
+        const ratio = 1 - clampedFraction;
+
+        if (targetId === 'master') {
           handleSetMasterVolume(ratio);
         } else if (targetId === 'master_L') {
           handleSetMasterVolumeL(ratio);
@@ -395,8 +421,66 @@ export const AudioMixerView: React.FC<AudioMixerViewProps> = ({
         } else {
           handleSetVolume(targetId, ratio);
         }
+      };
+
+      const initialY = nativeEvent.clientY !== undefined
+        ? nativeEvent.clientY
+        : (nativeEvent.touches?.[0]?.clientY ?? nativeEvent.pageY);
+
+      if (initialY !== undefined) {
+        updateVolumeFromY(initialY);
       }
+
+      draggingTargetRef.current = { type: 'fader', id: targetId };
+
+      const handleWindowPointerMove = (ev: MouseEvent | PointerEvent | TouchEvent) => {
+        if (draggingTargetRef.current?.type === 'fader' && draggingTargetRef.current.id === targetId) {
+          const moveY =
+            (ev as MouseEvent).clientY ??
+            (ev as TouchEvent).touches?.[0]?.clientY ??
+            (ev as any).pageY;
+          if (moveY !== undefined) {
+            updateVolumeFromY(moveY);
+          }
+        }
+      };
+
+      const handleWindowPointerUp = () => {
+        draggingTargetRef.current = null;
+        if (captureTarget && pointerId !== undefined && typeof captureTarget.releasePointerCapture === 'function') {
+          try {
+            if (captureTarget.hasPointerCapture ? captureTarget.hasPointerCapture(pointerId) : true) {
+              captureTarget.releasePointerCapture(pointerId);
+            }
+          } catch {}
+        }
+
+        window.removeEventListener('pointermove', handleWindowPointerMove as any);
+        window.removeEventListener('pointerup', handleWindowPointerUp as any);
+        window.removeEventListener('pointercancel', handleWindowPointerUp as any);
+        window.removeEventListener('mousemove', handleWindowPointerMove as any);
+        window.removeEventListener('mouseup', handleWindowPointerUp as any);
+        window.removeEventListener('touchmove', handleWindowPointerMove as any);
+        window.removeEventListener('touchend', handleWindowPointerUp as any);
+        window.removeEventListener('touchcancel', handleWindowPointerUp as any);
+        window.removeEventListener('blur', handleWindowPointerUp as any);
+      };
+
+      window.addEventListener('pointermove', handleWindowPointerMove as any);
+      window.addEventListener('pointerup', handleWindowPointerUp as any);
+      window.addEventListener('pointercancel', handleWindowPointerUp as any);
+      window.addEventListener('mousemove', handleWindowPointerMove as any);
+      window.addEventListener('mouseup', handleWindowPointerUp as any);
+      window.addEventListener('touchmove', handleWindowPointerMove as any, { passive: true });
+      window.addEventListener('touchend', handleWindowPointerUp as any);
+      window.addEventListener('touchcancel', handleWindowPointerUp as any);
+      window.addEventListener('blur', handleWindowPointerUp as any);
     }
+  };
+
+  // Backwards-compatible alias for any callers
+  const updateFaderFromPointer = (e: any, targetId?: string) => {
+    handleFaderPointerDown(e, targetId || 'master');
   };
 
   // Skeuomorphic Rotary Knob Interaction (Drag left/right or up/down, Double-click to center)
@@ -679,20 +763,7 @@ export const AudioMixerView: React.FC<AudioMixerViewProps> = ({
                     <View
                       style={styles.faderTrackContainer}
                       // @ts-ignore
-                      onPointerDown={(e: any) => {
-                        draggingTargetRef.current = { type: 'fader', id: ch.id };
-                        updateFaderFromPointer(e, ch.id);
-                      }}
-                      // @ts-ignore
-                      onPointerMove={(e: any) => {
-                        if (draggingTargetRef.current?.type === 'fader' && draggingTargetRef.current.id === ch.id) {
-                          updateFaderFromPointer(e, ch.id);
-                        }
-                      }}
-                      // @ts-ignore
-                      onPointerUp={() => {
-                        draggingTargetRef.current = null;
-                      }}
+                      onPointerDown={(e: any) => handleFaderPointerDown(e, ch.id)}
                     >
                       <View style={styles.faderSlotTrack}>
                         <View style={styles.faderUnityNotch} />
@@ -737,22 +808,7 @@ export const AudioMixerView: React.FC<AudioMixerViewProps> = ({
                         <View
                           style={styles.splitFaderContainer}
                           // @ts-ignore
-                          onPointerDown={(e: any) => {
-                            const target = ch.id + '_A';
-                            draggingTargetRef.current = { type: 'fader', id: target };
-                            updateFaderFromPointer(e, target);
-                          }}
-                          // @ts-ignore
-                          onPointerMove={(e: any) => {
-                            const target = ch.id + '_A';
-                            if (draggingTargetRef.current?.type === 'fader' && draggingTargetRef.current.id === target) {
-                              updateFaderFromPointer(e, target);
-                            }
-                          }}
-                          // @ts-ignore
-                          onPointerUp={() => {
-                            draggingTargetRef.current = null;
-                          }}
+                          onPointerDown={(e: any) => handleFaderPointerDown(e, ch.id + '_A')}
                         >
                           <View style={styles.splitSlotTrack}>
                             <View style={styles.faderUnityNotch} />
@@ -787,22 +843,7 @@ export const AudioMixerView: React.FC<AudioMixerViewProps> = ({
                         <View
                           style={styles.splitFaderContainer}
                           // @ts-ignore
-                          onPointerDown={(e: any) => {
-                            const target = ch.id + '_B';
-                            draggingTargetRef.current = { type: 'fader', id: target };
-                            updateFaderFromPointer(e, target);
-                          }}
-                          // @ts-ignore
-                          onPointerMove={(e: any) => {
-                            const target = ch.id + '_B';
-                            if (draggingTargetRef.current?.type === 'fader' && draggingTargetRef.current.id === target) {
-                              updateFaderFromPointer(e, target);
-                            }
-                          }}
-                          // @ts-ignore
-                          onPointerUp={() => {
-                            draggingTargetRef.current = null;
-                          }}
+                          onPointerDown={(e: any) => handleFaderPointerDown(e, ch.id + '_B')}
                         >
                           <View style={styles.splitSlotTrack}>
                             <View style={styles.faderUnityNotch} />
@@ -930,20 +971,7 @@ export const AudioMixerView: React.FC<AudioMixerViewProps> = ({
                 <View
                   style={styles.masterDualFadersColumn}
                   // @ts-ignore: React Native Web pointer event
-                  onPointerDown={(e: any) => {
-                    draggingTargetRef.current = { type: 'fader', id: 'master' };
-                    updateFaderFromPointer(e, 'master');
-                  }}
-                  // @ts-ignore: React Native Web pointer event
-                  onPointerMove={(e: any) => {
-                    if (draggingTargetRef.current?.type === 'fader' && draggingTargetRef.current.id === 'master') {
-                      updateFaderFromPointer(e, 'master');
-                    }
-                  }}
-                  // @ts-ignore: React Native Web pointer event
-                  onPointerUp={() => {
-                    draggingTargetRef.current = null;
-                  }}
+                  onPointerDown={(e: any) => handleFaderPointerDown(e, 'master')}
                 >
                   <View style={styles.faderTrackContainer}>
                     {/* Dual Track Slots for L & R */}
@@ -1007,20 +1035,7 @@ export const AudioMixerView: React.FC<AudioMixerViewProps> = ({
                     <View
                       style={styles.masterSplitTrackContainer}
                       // @ts-ignore: React Native Web pointer event
-                      onPointerDown={(e: any) => {
-                        draggingTargetRef.current = { type: 'fader', id: 'master_L' };
-                        updateFaderFromPointer(e, 'master_L');
-                      }}
-                      // @ts-ignore: React Native Web pointer event
-                      onPointerMove={(e: any) => {
-                        if (draggingTargetRef.current?.type === 'fader' && draggingTargetRef.current.id === 'master_L') {
-                          updateFaderFromPointer(e, 'master_L');
-                        }
-                      }}
-                      // @ts-ignore: React Native Web pointer event
-                      onPointerUp={() => {
-                        draggingTargetRef.current = null;
-                      }}
+                      onPointerDown={(e: any) => handleFaderPointerDown(e, 'master_L')}
                     >
                       <View style={styles.faderSlotTrack}>
                         <View style={styles.faderUnityNotch} />
@@ -1048,20 +1063,7 @@ export const AudioMixerView: React.FC<AudioMixerViewProps> = ({
                     <View
                       style={styles.masterSplitTrackContainer}
                       // @ts-ignore: React Native Web pointer event
-                      onPointerDown={(e: any) => {
-                        draggingTargetRef.current = { type: 'fader', id: 'master_R' };
-                        updateFaderFromPointer(e, 'master_R');
-                      }}
-                      // @ts-ignore: React Native Web pointer event
-                      onPointerMove={(e: any) => {
-                        if (draggingTargetRef.current?.type === 'fader' && draggingTargetRef.current.id === 'master_R') {
-                          updateFaderFromPointer(e, 'master_R');
-                        }
-                      }}
-                      // @ts-ignore: React Native Web pointer event
-                      onPointerUp={() => {
-                        draggingTargetRef.current = null;
-                      }}
+                      onPointerDown={(e: any) => handleFaderPointerDown(e, 'master_R')}
                     >
                       <View style={styles.faderSlotTrack}>
                         <View style={styles.faderUnityNotch} />
