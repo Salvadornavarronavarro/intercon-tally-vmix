@@ -25,20 +25,13 @@ import { BrandedTopBar } from './BrandedTopBar';
 import { CrewAuthModal } from './CrewAuthModal';
 import { AudioMixerView } from './AudioMixerView';
 
-const CAMERAS = ['cam1', 'cam2', 'cam3', 'cam4', 'cam5', 'cam6', 'cam7', 'cam8'];
-
-const CAMERA_LABELS: Record<string, string> = {
-  cam1: 'CAM 1',
-  cam2: 'CAM 2',
-  cam3: 'CAM 3',
-  cam4: 'CAM 4',
-  cam5: 'CAM 5',
-  cam6: 'CAM 6',
-  cam7: 'CAM 7',
-  cam8: 'CAM 8',
-};
+const CAMERA_LABELS: Record<string, string> = Object.fromEntries(
+  Array.from({ length: 16 }, (_, i) => [`cam${i + 1}`, `CAM ${i + 1}`])
+);
 
 export const DirectorView: React.FC = () => {
+  const [cameraCount, setCameraCount] = useState<number>(8);
+  const activeCameras = Array.from({ length: cameraCount }, (_, i) => `cam${i + 1}`);
   const {
     currentUser,
     currentRoomId,
@@ -379,6 +372,27 @@ export const DirectorView: React.FC = () => {
           ) : null}
         </TouchableOpacity>
 
+        {/* TAB 3: CONTROL DE SONIDO */}
+        <TouchableOpacity
+          style={[
+            styles.tabButton,
+            activeTab === 'audio' && styles.tabButtonActive,
+          ]}
+          onPress={() => setActiveTab('audio')}
+          activeOpacity={0.8}
+        >
+          <Text style={styles.tabIcon}>🔊</Text>
+          <Text
+            style={[
+              styles.tabButtonText,
+              activeTab === 'audio' && styles.tabButtonTextActive,
+            ]}
+          >
+            CONTROL DE SONIDO
+          </Text>
+        </TouchableOpacity>
+
+        {/* TAB 4: CONEXIÓN VMIX (Strictly anchored as the last tab on the far right) */}
         <TouchableOpacity
           style={[
             styles.tabButton,
@@ -417,25 +431,6 @@ export const DirectorView: React.FC = () => {
               {vmixStatus.connected ? 'ONLINE' : 'OFFLINE'}
             </Text>
           </View>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={[
-            styles.tabButton,
-            activeTab === 'audio' && styles.tabButtonActive,
-          ]}
-          onPress={() => setActiveTab('audio')}
-          activeOpacity={0.8}
-        >
-          <Text style={styles.tabIcon}>🔊</Text>
-          <Text
-            style={[
-              styles.tabButtonText,
-              activeTab === 'audio' && styles.tabButtonTextActive,
-            ]}
-          >
-            CONTROL DE SONIDO
-          </Text>
         </TouchableOpacity>
       </View>
 
@@ -483,14 +478,42 @@ export const DirectorView: React.FC = () => {
               </View>
             </View>
 
-            {/* 4x2 Camera Matrix (CAM 1-4, CAM 5-8) */}
+            {/* Camera Matrix Header with Dynamic Stepper */}
             <View style={styles.cameraMatrixHeader}>
-              <Text style={styles.sectionTitle}>CAMERA TALLY MATRIX (4x2)</Text>
-              <Text style={styles.matrixHint}>Tap card to Stage Preview / Cut to Program</Text>
+              <View style={styles.cameraMatrixHeaderLeft}>
+                <Text style={styles.sectionTitle}>CAMERA TALLY MATRIX</Text>
+                <Text style={styles.matrixHint}>Tap card to Stage Preview / Cut to Program</Text>
+              </View>
+
+              {/* Dynamic Studio Camera Count Manager (Director Only) */}
+              <View style={styles.cameraStepperContainer}>
+                <Text style={styles.cameraStepperLabel}>CAMERAS:</Text>
+                <View style={styles.cameraStepperControls}>
+                  <TouchableOpacity
+                    style={[styles.cameraStepperBtn, cameraCount <= 1 && styles.cameraStepperBtnDisabled]}
+                    disabled={cameraCount <= 1}
+                    onPress={() => setCameraCount((prev) => Math.max(1, prev - 1))}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={styles.cameraStepperBtnText}>−</Text>
+                  </TouchableOpacity>
+                  <View style={styles.cameraCountPill}>
+                    <Text style={styles.cameraCountPillText}>{cameraCount}</Text>
+                  </View>
+                  <TouchableOpacity
+                    style={[styles.cameraStepperBtn, cameraCount >= 16 && styles.cameraStepperBtnDisabled]}
+                    disabled={cameraCount >= 16}
+                    onPress={() => setCameraCount((prev) => Math.min(16, prev + 1))}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={styles.cameraStepperBtnText}>+</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
             </View>
 
             <View style={styles.cameraGrid}>
-              {CAMERAS.map((camId) => {
+              {activeCameras.map((camId) => {
                 const isProgram = activeProgramCamera === camId;
                 const isPreview = activePreviewCamera === camId;
                 const operator = getOperatorForCamera(camId);
@@ -901,7 +924,20 @@ export const DirectorView: React.FC = () => {
         </View>
 
         {/* ==================================================================== */}
-        {/* TAB 3: CONEXIÓN VMIX                                                */}
+        {/* TAB 3: CONTROL DE SONIDO                                            */}
+        {/* ==================================================================== */}
+        <View style={[styles.tabPane, activeTab !== 'audio' && styles.tabPaneHidden]}>
+          <AudioMixerView
+            cameraCount={cameraCount}
+            cameraMuteMap={cameraMuteMap}
+            onToggleCameraMute={handleToggleCameraMute}
+            activeProgramCamera={activeProgramCamera}
+            activePreviewCamera={activePreviewCamera}
+          />
+        </View>
+
+        {/* ==================================================================== */}
+        {/* TAB 4: CONEXIÓN VMIX                                                */}
         {/* ==================================================================== */}
         <View style={[styles.tabPane, activeTab !== 'vmix' && styles.tabPaneHidden]}>
           <ScrollView
@@ -1034,7 +1070,7 @@ export const DirectorView: React.FC = () => {
                     STRICT 1-TO-1 VMIX INPUT MAPPING (LEFT-TO-RIGHT: CAM 1 = INPUT 1)
                   </Text>
                   <View style={styles.mappingGrid}>
-                    {['cam1', 'cam2', 'cam3', 'cam4', 'cam5', 'cam6', 'cam7', 'cam8'].map((camId) => {
+                    {activeCameras.map((camId) => {
                       const num = camId.replace('cam', '');
                       const isFeatured = parseInt(num, 10) <= 4;
                       const mappedInput = cameraMapState[camId] || num;
@@ -1045,7 +1081,7 @@ export const DirectorView: React.FC = () => {
                           style={[styles.mappingCard, isFeatured && styles.mappingCardFeatured]}
                         >
                           <View style={styles.mappingCardHeader}>
-                            <Text style={styles.mappingCamLabel}>{CAMERA_LABELS[camId]}</Text>
+                            <Text style={styles.mappingCamLabel}>{CAMERA_LABELS[camId] || `CAM ${num}`}</Text>
                             <Text style={styles.mappingVoiceHint}>"cámara {num}"</Text>
                           </View>
 
@@ -1084,18 +1120,6 @@ export const DirectorView: React.FC = () => {
               </View>
             </View>
           </ScrollView>
-        </View>
-
-        {/* ==================================================================== */}
-        {/* TAB 4: CONTROL DE SONIDO                                            */}
-        {/* ==================================================================== */}
-        <View style={[styles.tabPane, activeTab !== 'audio' && styles.tabPaneHidden]}>
-          <AudioMixerView
-            cameraMuteMap={cameraMuteMap}
-            onToggleCameraMute={handleToggleCameraMute}
-            activeProgramCamera={activeProgramCamera}
-            activePreviewCamera={activePreviewCamera}
-          />
         </View>
       </View>
 
@@ -2388,6 +2412,65 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     marginBottom: 6,
+  },
+  cameraMatrixHeaderLeft: {
+    flexDirection: 'column',
+  },
+  cameraStepperContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#151620',
+    borderWidth: 1,
+    borderColor: '#2A2C3C',
+    borderRadius: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    gap: 8,
+  },
+  cameraStepperLabel: {
+    color: '#8F91A8',
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 0.5,
+  },
+  cameraStepperControls: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  cameraStepperBtn: {
+    width: 24,
+    height: 24,
+    borderRadius: 4,
+    backgroundColor: '#222432',
+    borderWidth: 1,
+    borderColor: '#3B3E54',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  cameraStepperBtnDisabled: {
+    opacity: 0.35,
+  },
+  cameraStepperBtnText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '900',
+    lineHeight: 16,
+  },
+  cameraCountPill: {
+    backgroundColor: '#0D0E15',
+    borderWidth: 1,
+    borderColor: '#FF1744',
+    borderRadius: 4,
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    minWidth: 26,
+    alignItems: 'center',
+  },
+  cameraCountPillText: {
+    color: '#00E676',
+    fontSize: 12,
+    fontWeight: '900',
   },
   matrixHint: {
     color: '#65657E',

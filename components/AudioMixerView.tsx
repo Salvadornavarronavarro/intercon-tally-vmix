@@ -4,10 +4,12 @@ import {
   Text,
   StyleSheet,
   TouchableOpacity,
+  ScrollView,
   Platform,
 } from 'react-native';
 
 export interface AudioMixerViewProps {
+  cameraCount?: number;
   cameraMuteMap?: Record<string, boolean>;
   onToggleCameraMute?: (camId: string) => void;
   activeProgramCamera?: string | null;
@@ -67,14 +69,15 @@ function panToString(pan: number): string {
 }
 
 export const AudioMixerView: React.FC<AudioMixerViewProps> = ({
+  cameraCount = 8,
   cameraMuteMap = {},
   onToggleCameraMute,
   activeProgramCamera,
   activePreviewCamera,
 }) => {
-  // 8 Channels initialized (default: STEREO mode)
+  // Dynamically initialized channels (default: STEREO mode)
   const [channels, setChannels] = useState<ChannelState[]>(() =>
-    Array.from({ length: 8 }, (_, i) => {
+    Array.from({ length: cameraCount }, (_, i) => {
       const camId = `cam${i + 1}`;
       return {
         id: camId,
@@ -93,6 +96,39 @@ export const AudioMixerView: React.FC<AudioMixerViewProps> = ({
       };
     })
   );
+
+  // Synchronize channels length when cameraCount changes
+  useEffect(() => {
+    setChannels((prev) => {
+      if (prev.length === cameraCount) return prev;
+      if (prev.length < cameraCount) {
+        const added: ChannelState[] = Array.from(
+          { length: cameraCount - prev.length },
+          (_, idx) => {
+            const chNum = prev.length + idx + 1;
+            const camId = `cam${chNum}`;
+            return {
+              id: camId,
+              num: chNum,
+              mode: 'stereo',
+              volume: 0.75,
+              volumeA: 0.75,
+              volumeB: 0.75,
+              pan: 0,
+              muted: !!cameraMuteMap[camId],
+              solo: false,
+              meterLevelL: 0.15,
+              meterLevelR: 0.15,
+              peakLevelL: 0.25,
+              peakLevelR: 0.25,
+            };
+          }
+        );
+        return [...prev, ...added];
+      }
+      return prev.slice(0, cameraCount);
+    });
+  }, [cameraCount, cameraMuteMap]);
 
   // Master Section State
   const [masterVolume, setMasterVolume] = useState<number>(0.75); // 0 dB unity
@@ -426,10 +462,16 @@ export const AudioMixerView: React.FC<AudioMixerViewProps> = ({
       {/* Main Console Workspace: 8 Channels + 1 Master */}
       <View style={styles.consoleBody}>
         {/* ================================================================== */}
-        {/* CHANNELS 1 TO 8                                                    */}
+        {/* CHANNELS 1 TO N (Dynamically rendered & auto-scaling)              */}
         {/* ================================================================== */}
-        <View style={styles.channelsRack}>
-          {channels.map((ch) => {
+        <View style={styles.channelsRackWrapper}>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.channelsRackScrollContent}
+            style={styles.channelsRackScroll}
+          >
+            {channels.map((ch) => {
             const isPgm = activeProgramCamera === ch.id;
             const isPvw = activePreviewCamera === ch.id;
             const isSplit = ch.mode === 'split';
@@ -767,6 +809,7 @@ export const AudioMixerView: React.FC<AudioMixerViewProps> = ({
               </View>
             );
           })}
+          </ScrollView>
         </View>
 
         {/* ================================================================== */}
@@ -1029,13 +1072,27 @@ const styles = StyleSheet.create({
     alignItems: 'stretch',
   },
   /* Channels Rack */
-  channelsRack: {
+  channelsRackWrapper: {
     flex: 1,
+    minWidth: 0,
+    height: '100%',
+  },
+  channelsRackScroll: {
+    flex: 1,
+    minWidth: 0,
+    height: '100%',
+  },
+  channelsRackScrollContent: {
     flexDirection: 'row',
     gap: 5,
+    alignItems: 'stretch',
+    minWidth: '100%',
+    height: '100%',
   },
   stripCard: {
     flex: 1,
+    minWidth: 76,
+    maxWidth: 135,
     backgroundColor: '#12121A',
     borderRadius: 7,
     borderWidth: 1,
@@ -1043,6 +1100,7 @@ const styles = StyleSheet.create({
     padding: 5,
     justifyContent: 'space-between',
     alignItems: 'center',
+    height: '100%',
   },
   stripCardPgm: {
     borderColor: '#FF1744',
