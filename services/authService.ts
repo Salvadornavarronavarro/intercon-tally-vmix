@@ -8,6 +8,79 @@ const STORAGE_KEY = 'intercon_tally_auth_session';
 export const SESSION_DURATION_DAYS = 30;
 export const THIRTY_DAYS_MS = SESSION_DURATION_DAYS * 24 * 60 * 60 * 1000;
 
+// High-risk disposable / temporary / burner email domains
+const DISPOSABLE_EMAIL_DOMAINS = new Set([
+  'mailinator.com',
+  '10minutemail.com',
+  'tempmail.com',
+  'temp-mail.org',
+  'temp-mail.io',
+  'tempail.com',
+  'guerrillamail.com',
+  'guerrillamailblock.com',
+  'guerrillamail.biz',
+  'guerrillamail.de',
+  'guerrillamail.net',
+  'guerrillamail.org',
+  'grr.la',
+  'sharklasers.com',
+  'pokemail.net',
+  'spam4.me',
+  'trashmail.com',
+  'trashmail.me',
+  'trashmail.at',
+  'trashmail.io',
+  'getairmail.com',
+  'yopmail.com',
+  'yopmail.net',
+  'yopmail.fr',
+  'throwawaymail.com',
+  'dispostable.com',
+  'fakeinbox.com',
+  'mohmal.com',
+  'burnermail.io',
+  'inboxkitten.com',
+  'crazymailing.com',
+  'mytemp.email',
+  'dropmail.me',
+  'emailondeck.com',
+  'generator.email',
+  'getnada.com',
+  'maildrop.cc',
+  'nada.ltd',
+  'mytrashmail.com',
+  'fastmail.fm',
+  'harakirimail.com',
+  'binkmail.com',
+  'safetymail.info',
+]);
+
+const FAKE_TEST_DOMAINS = new Set([
+  'test.com',
+  'test.test',
+  'example.com',
+  'example.org',
+  'example.net',
+  'asdf.com',
+  'fake.com',
+  'sample.com',
+  'domain.com',
+  'invalid.com',
+  'mail.com',
+  'abc.com',
+]);
+
+function getApiBaseUrl(): string {
+  if (typeof window !== 'undefined' && window.location) {
+    const { hostname, port, protocol } = window.location;
+    if (port === '8081' || port === '19006') {
+      return `${protocol}//${hostname}:3000`;
+    }
+    return '';
+  }
+  return '';
+}
+
 export const authService = {
   /**
    * Retrieves the current authenticated session from localStorage if valid and non-expired.
@@ -39,11 +112,94 @@ export const authService = {
   },
 
   /**
-   * Stores an authenticated session valid for 30 days.
+   * Real-time email validation verifying format, valid domain structure, and rejecting burner/temporary emails.
    */
-  login(email: string): AuthSession {
+  validateEmail(email: string): { valid: boolean; reason?: string } {
+    const trimmed = email.trim().toLowerCase();
+    if (!trimmed) {
+      return { valid: false, reason: 'Introduce tu correo electrónico.' };
+    }
+    if (trimmed.length > 254) {
+      return { valid: false, reason: 'El correo electrónico es demasiado largo.' };
+    }
+
+    // Standard RFC-compliant email syntax regex
+    const emailRegex = /^[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)+$/;
+    if (!emailRegex.test(trimmed)) {
+      return { valid: false, reason: 'Formato de correo no válido (ej. usuario@estudio.com).' };
+    }
+
+    const parts = trimmed.split('@');
+    if (parts.length !== 2) {
+      return { valid: false, reason: 'Formato de correo no válido.' };
+    }
+
+    const domain = parts[1];
+    if (!domain.includes('.')) {
+      return { valid: false, reason: 'El dominio del correo debe incluir una extensión válida (ej. .com, .es).' };
+    }
+
+    const domainParts = domain.split('.');
+    const tld = domainParts[domainParts.length - 1];
+    if (tld.length < 2 || !/^[a-zA-Z]+$/.test(tld)) {
+      return { valid: false, reason: 'Extensión de dominio inválida (ej. .com, .net, .org, .es).' };
+    }
+
+    if (DISPOSABLE_EMAIL_DOMAINS.has(domain)) {
+      return { valid: false, reason: 'No se permiten correos temporales o desechables. Usa tu correo real o corporativo.' };
+    }
+
+    if (FAKE_TEST_DOMAINS.has(domain)) {
+      return { valid: false, reason: 'Por favor, introduce un correo electrónico real de trabajo o personal.' };
+    }
+
+    return { valid: true };
+  },
+
+  /**
+   * Helper returning boolean for validity check.
+   */
+  isValidEmail(email: string): boolean {
+    return this.validateEmail(email).valid;
+  },
+
+  /**
+   * Asynchronously dispatches verified subscriber lead to server backend and Google Sheets pipeline.
+   */
+  async registerSubscriberLead(email: string, role: string = 'director'): Promise<boolean> {
+    const cleanEmail = email.trim().toLowerCase();
+    try {
+      const baseUrl = getApiBaseUrl();
+      const res = await fetch(`${baseUrl}/api/subscribers`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+        },
+        body: JSON.stringify({
+          email: cleanEmail,
+          role,
+          timestamp: new Date().toISOString(),
+        }),
+      });
+      if (res.ok) {
+        console.log(`[authService] Successfully registered lead: ${cleanEmail}`);
+        return true;
+      }
+      return false;
+    } catch (err) {
+      console.warn('[authService] Non-blocking subscriber lead sync notice:', err);
+      return false;
+    }
+  },
+
+  /**
+   * Stores an authenticated session valid for 30 days and triggers background lead registration.
+   */
+  login(email: string, role: string = 'director'): AuthSession {
+    const cleanEmail = email.trim().toLowerCase();
     const session: AuthSession = {
-      email: email.trim().toLowerCase(),
+      email: cleanEmail,
       authenticatedAt: Date.now(),
       expiresAt: Date.now() + THIRTY_DAYS_MS,
     };
@@ -54,6 +210,10 @@ export const authService = {
         console.warn('[authService] Could not write session to localStorage:', err);
       }
     }
+
+    // Asynchronously log lead into server persistence & Google Sheets without blocking UI
+    this.registerSubscriberLead(cleanEmail, role).catch(() => {});
+
     return session;
   },
 
@@ -68,15 +228,5 @@ export const authService = {
         console.warn('[authService] Could not remove session from localStorage:', err);
       }
     }
-  },
-
-  /**
-   * Checks whether the given string is a valid email address.
-   */
-  isValidEmail(email: string): boolean {
-    const trimmed = email.trim();
-    if (!trimmed || trimmed.length > 254) return false;
-    const emailRegex = /^[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)+$/;
-    return emailRegex.test(trimmed);
   },
 };

@@ -23,13 +23,9 @@ export const EmailLoginGate: React.FC<EmailLoginGateProps> = ({ onLoginSuccess }
 
   const handleSubmit = () => {
     const trimmed = email.trim();
-    if (!trimmed) {
-      setErrorMessage('Introduce tu correo electrónico.');
-      return;
-    }
-
-    if (!authService.isValidEmail(trimmed)) {
-      setErrorMessage('Por favor, introduce un correo electrónico válido (ej. usuario@estudio.com).');
+    const validation = authService.validateEmail(trimmed);
+    if (!validation.valid) {
+      setErrorMessage(validation.reason || 'Por favor, introduce un correo electrónico válido.');
       return;
     }
 

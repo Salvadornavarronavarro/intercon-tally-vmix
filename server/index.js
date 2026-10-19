@@ -297,6 +297,186 @@ app.get(['/health', '/api/health', '/healthz'], (req, res) => {
   });
 });
 
+// ======================================================================
+// LEAD CAPTURE & SUBSCRIBER MANAGEMENT (Google Sheets Ready)
+// ======================================================================
+const DATA_DIR = path.resolve(__dirname, 'data');
+const SUBSCRIBERS_FILE = path.resolve(DATA_DIR, 'subscribers.jsonl');
+
+if (!fs.existsSync(DATA_DIR)) {
+  fs.mkdirSync(DATA_DIR, { recursive: true });
+}
+
+// Set of disposable / temporary domains to reject on server
+const SERVER_DISPOSABLE_DOMAINS = new Set([
+  'mailinator.com', '10minutemail.com', 'tempmail.com', 'temp-mail.org',
+  'temp-mail.io', 'tempail.com', 'guerrillamail.com', 'guerrillamailblock.com',
+  'guerrillamail.biz', 'guerrillamail.de', 'guerrillamail.net', 'guerrillamail.org',
+  'grr.la', 'sharklasers.com', 'pokemail.net', 'spam4.me', 'trashmail.com',
+  'trashmail.me', 'trashmail.at', 'trashmail.io', 'getairmail.com', 'yopmail.com',
+  'yopmail.net', 'yopmail.fr', 'throwawaymail.com', 'dispostable.com', 'fakeinbox.com',
+  'mohmal.com', 'burnermail.io', 'inboxkitten.com', 'crazymailing.com', 'mytemp.email',
+  'dropmail.me', 'emailondeck.com', 'generator.email', 'getnada.com', 'maildrop.cc',
+  'nada.ltd', 'mytrashmail.com', 'fastmail.fm', 'harakirimail.com',
+]);
+
+const SERVER_FAKE_DOMAINS = new Set([
+  'test.com', 'test.test', 'example.com', 'example.org', 'example.net',
+  'asdf.com', 'fake.com', 'sample.com', 'domain.com', 'invalid.com',
+]);
+
+function isValidServerEmail(email) {
+  if (!email || typeof email !== 'string') return false;
+  const clean = email.trim().toLowerCase();
+  if (clean.length > 254) return false;
+  const emailRegex = /^[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)+$/;
+  if (!emailRegex.test(clean)) return false;
+
+  const parts = clean.split('@');
+  if (parts.length !== 2) return false;
+  const domain = parts[1];
+  if (!domain.includes('.')) return false;
+
+  const domainParts = domain.split('.');
+  const tld = domainParts[domainParts.length - 1];
+  if (tld.length < 2 || !/^[a-zA-Z]+$/.test(tld)) return false;
+
+  if (SERVER_DISPOSABLE_DOMAINS.has(domain) || SERVER_FAKE_DOMAINS.has(domain)) {
+    return false;
+  }
+  return true;
+}
+
+function recordSubscriber(entry) {
+  try {
+    const line = JSON.stringify(entry) + '\n';
+    fs.appendFileSync(SUBSCRIBERS_FILE, line, 'utf8');
+    console.log(`[LeadCapture] Appended subscriber: ${entry.email} (Role: ${entry.role})`);
+  } catch (err) {
+    console.error('[LeadCapture] Failed to append subscriber to file:', err.message);
+  }
+}
+
+async function syncToGoogleSheets(entry) {
+  const webhookUrl = process.env.GOOGLE_SHEETS_WEBHOOK_URL;
+  if (!webhookUrl) {
+    return;
+  }
+  try {
+    console.log(`[GoogleSheetsDispatcher] Pushing lead to webhook: ${entry.email}`);
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 6000);
+
+    const res = await fetch(webhookUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(entry),
+      signal: controller.signal,
+    });
+    clearTimeout(timeout);
+    console.log(`[GoogleSheetsDispatcher] Webhook response status: ${res.status}`);
+  } catch (err) {
+    console.warn(`[GoogleSheetsDispatcher] Non-blocking webhook dispatch notice for ${entry.email}:`, err.message);
+  }
+}
+
+function getAllSubscribers() {
+  if (!fs.existsSync(SUBSCRIBERS_FILE)) return [];
+  try {
+    const raw = fs.readFileSync(SUBSCRIBERS_FILE, 'utf8');
+    return raw
+      .trim()
+      .split('\n')
+      .filter(Boolean)
+      .map((line) => {
+        try {
+          return JSON.parse(line);
+        } catch {
+          return null;
+        }
+      })
+      .filter(Boolean);
+  } catch (err) {
+    console.warn('[LeadCapture] Error reading subscribers:', err.message);
+    return [];
+  }
+}
+
+// POST /api/subscribers - Registers a verified subscriber lead
+app.post(['/api/subscribers', '/api/auth/register-lead'], async (req, res) => {
+  const rawEmail = req.body.email || req.query.email;
+  const role = req.body.role || req.query.role || 'director';
+
+  if (!rawEmail || !isValidServerEmail(rawEmail)) {
+    return res.status(400).json({
+      success: false,
+      error: 'INVALID_EMAIL',
+      message: 'Please provide a valid, non-disposable email address.',
+    });
+  }
+
+  const cleanEmail = rawEmail.trim().toLowerCase();
+  const entry = {
+    email: cleanEmail,
+    role: role.trim(),
+    timestamp: req.body.timestamp || new Date().toISOString(),
+    ip: (req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').split(',')[0].trim(),
+    userAgent: req.headers['user-agent'] || '',
+  };
+
+  recordSubscriber(entry);
+  syncToGoogleSheets(entry).catch(() => {});
+
+  return res.status(200).json({
+    success: true,
+    message: 'Subscriber lead registered successfully.',
+    subscriber: {
+      email: entry.email,
+      role: entry.role,
+      timestamp: entry.timestamp,
+    },
+  });
+});
+
+// GET /api/admin/subscribers - Protected subscriber export (JSON or CSV)
+app.get('/api/admin/subscribers', (req, res) => {
+  const adminSecret = process.env.ADMIN_SECRET_KEY || 'intercon-admin-2026';
+  const providedKey = req.headers['x-admin-key'] || req.query.key || req.query.token;
+
+  if (providedKey !== adminSecret) {
+    return res.status(401).json({
+      success: false,
+      error: 'UNAUTHORIZED',
+      message: 'Access denied. Provide valid admin key in x-admin-key header or ?key= query parameter.',
+    });
+  }
+
+  const list = getAllSubscribers();
+  const wantsCsv = req.query.format === 'csv' || (req.headers.accept && req.headers.accept.includes('text/csv'));
+
+  if (wantsCsv) {
+    const csvRows = ['Email,Role,Timestamp,IP'];
+    for (const item of list) {
+      const email = `"${(item.email || '').replace(/"/g, '""')}"`;
+      const role = `"${(item.role || '').replace(/"/g, '""')}"`;
+      const timestamp = `"${(item.timestamp || '').replace(/"/g, '""')}"`;
+      const ip = `"${(item.ip || '').replace(/"/g, '""')}"`;
+      csvRows.push(`${email},${role},${timestamp},${ip}`);
+    }
+    const csvContent = csvRows.join('\n');
+
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="subscribers-${new Date().toISOString().split('T')[0]}.csv"`);
+    return res.status(200).send(csvContent);
+  }
+
+  return res.status(200).json({
+    success: true,
+    count: list.length,
+    subscribers: list,
+  });
+});
+
 // Serve static files from the compiled web bundle directory ('../dist' or './dist')
 const distDir = fs.existsSync(path.join(__dirname, '../dist'))
   ? path.join(__dirname, '../dist')

@@ -94,6 +94,16 @@ export const DirectorView: React.FC = () => {
     };
   }, []);
 
+  // Initialize default broadcast tally pair (CAM 1 live, CAM 2 preview) if none active
+  useEffect(() => {
+    if (!activeProgramCamera && !activePreviewCamera) {
+      setProgramCamera('cam1');
+      setPreviewCamera('cam2');
+    } else if (activeProgramCamera && !activePreviewCamera) {
+      setPreviewCamera(activeProgramCamera === 'cam1' ? 'cam2' : 'cam1');
+    }
+  }, [activeProgramCamera, activePreviewCamera, setProgramCamera, setPreviewCamera]);
+
   /**
    * Dispatches PREVIEW:
    * 1. Intercom Tally preview state (green badge + intermittent beep)
@@ -213,8 +223,8 @@ export const DirectorView: React.FC = () => {
     }
 
     if (activePreviewCamera === camId) {
-      // In Preview: Cut to Program
-      triggerProgram(camId);
+      // In Preview: Execute Flip-Flop cut
+      handleTakeCut();
     } else {
       // Idle or other: Stage into Preview
       triggerPreview(camId);
@@ -222,27 +232,49 @@ export const DirectorView: React.FC = () => {
   };
 
   /**
-   * Dedicated CUT / TAKE action
-   * Transitions whatever is in Preview directly into Program immediately via vMix CutDirect
+   * Broadcast Flip-Flop CUT Action:
+   * Transitions active Preview into Program, and automatically assigns
+   * the outgoing Program as the incoming Preview (flip-flop ping-pong switching).
+   * CUT remains permanently enabled for rapid continuous switching.
    */
   const handleTakeCut = () => {
-    if (activePreviewCamera) {
-      triggerProgram(activePreviewCamera);
-    }
+    const incomingPgm = activePreviewCamera || (activeProgramCamera === 'cam1' ? 'cam2' : 'cam1');
+    const outgoingPgm = activeProgramCamera || (incomingPgm === 'cam1' ? 'cam2' : 'cam1');
+    const nextPreview = outgoingPgm !== incomingPgm ? outgoingPgm : (incomingPgm === 'cam1' ? 'cam2' : 'cam1');
+
+    setProgramCamera(incomingPgm);
+    setPreviewCamera(nextPreview);
+
+    vmixService.sendCut(incomingPgm).catch((err) => {
+      console.warn('[DirectorView] Non-blocking vMix sendCut notice:', err);
+    });
+
+    vmixService.sendPreview(nextPreview).catch((err) => {
+      console.warn('[DirectorView] Non-blocking vMix sendPreview notice:', err);
+    });
   };
 
   /**
-   * Dedicated FUNDIDO / FADE action
-   * Transitions whatever is in Preview into Program via vMix Fade
+   * Broadcast Flip-Flop FADE Action:
+   * Transitions active Preview into Program via vMix Fade,
+   * automatically assigning outgoing Program as the incoming Preview.
+   * FADE remains permanently enabled for continuous cross-fading.
    */
   const handleFade = () => {
-    if (activePreviewCamera) {
-      const targetCam = activePreviewCamera;
-      setProgramCamera(targetCam);
-      vmixService.sendFade().catch((err) => {
-        console.warn('[DirectorView] Non-blocking vMix sendFade notice:', err);
-      });
-    }
+    const incomingPgm = activePreviewCamera || (activeProgramCamera === 'cam1' ? 'cam2' : 'cam1');
+    const outgoingPgm = activeProgramCamera || (incomingPgm === 'cam1' ? 'cam2' : 'cam1');
+    const nextPreview = outgoingPgm !== incomingPgm ? outgoingPgm : (incomingPgm === 'cam1' ? 'cam2' : 'cam1');
+
+    setProgramCamera(incomingPgm);
+    setPreviewCamera(nextPreview);
+
+    vmixService.sendFade().catch((err) => {
+      console.warn('[DirectorView] Non-blocking vMix sendFade notice:', err);
+    });
+
+    vmixService.sendPreview(nextPreview).catch((err) => {
+      console.warn('[DirectorView] Non-blocking vMix sendPreview notice:', err);
+    });
   };
 
   /**
@@ -452,11 +484,10 @@ export const DirectorView: React.FC = () => {
                 </View>
               </View>
 
-              {/* CUT & FADE Buttons: Significantly enlarged tactile broadcast touch targets */}
+              {/* CUT & FADE Buttons: Permanently enabled for continuous flip-flop switching */}
               <View style={styles.transitionActions}>
                 <TouchableOpacity
-                  style={[styles.largeCutBtn, !activePreviewCamera && styles.buttonDisabled]}
-                  disabled={!activePreviewCamera}
+                  style={styles.largeCutBtn}
                   onPress={handleTakeCut}
                   activeOpacity={0.8}
                 >
@@ -464,8 +495,7 @@ export const DirectorView: React.FC = () => {
                 </TouchableOpacity>
 
                 <TouchableOpacity
-                  style={[styles.largeFadeBtn, !activePreviewCamera && styles.buttonDisabled]}
-                  disabled={!activePreviewCamera}
+                  style={styles.largeFadeBtn}
                   onPress={handleFade}
                   activeOpacity={0.8}
                 >
