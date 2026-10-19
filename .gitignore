@@ -38,3 +38,8 @@ yarn-error.*
 # generated native folders
 /ios
 /android
+
+# local lead data
+server/data/*.jsonl
+server/data/*.json
+!server/data/.gitkeep
