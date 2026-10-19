@@ -941,17 +941,18 @@ export const DirectorView: React.FC = () => {
         {/* ==================================================================== */}
         <View style={[styles.tabPane, activeTab !== 'vmix' && styles.tabPaneHidden]}>
           <ScrollView
-            contentContainerStyle={styles.tabScrollContent}
+            contentContainerStyle={[styles.tabScrollContent, styles.vmixTabScrollCenter]}
             showsVerticalScrollIndicator={false}
           >
-            {/* vMix Direct Integration Settings Card */}
-            <View style={styles.vmixPanelAlwaysOpen}>
+            {/* Dedicated Sleek Network Connection Card */}
+            <View style={styles.vmixCardCentered}>
+              {/* Card Header */}
               <View style={styles.vmixHeaderRow}>
                 <View style={styles.vmixTitleGroup}>
                   <Text style={styles.vmixTitleIcon}>⚡</Text>
                   <View>
                     <View style={styles.vmixTitleRow}>
-                      <Text style={styles.vmixTitle}>vMix DIRECT INTEGRATION</Text>
+                      <Text style={styles.vmixTitle}>vMix NETWORK CONNECTION</Text>
                       <View
                         style={[
                           styles.vmixStatusBadge,
@@ -971,13 +972,13 @@ export const DirectorView: React.FC = () => {
                           ]}
                         >
                           {vmixStatus.connected
-                            ? `CONNECTED (${vmixStatus.version ? 'v' + vmixStatus.version : 'ONLINE'})`
+                            ? `ONLINE (${vmixStatus.version ? 'v' + vmixStatus.version : 'READY'})`
                             : 'OFFLINE'}
                         </Text>
                       </View>
                     </View>
                     <Text style={styles.vmixSubtitle}>
-                      Local USB Tethering / LAN API Bridge • Mixed Content & CORS Bypass
+                      Direct HTTP API Bridge • Low-Latency LAN / USB Tethering Integration
                     </Text>
                   </View>
                 </View>
@@ -989,6 +990,7 @@ export const DirectorView: React.FC = () => {
                       vmixConfig.enabled ? styles.vmixToggleActive : styles.vmixToggleInactive,
                     ]}
                     onPress={handleToggleVmixEnabled}
+                    activeOpacity={0.8}
                   >
                     <Text style={styles.vmixToggleBtnText}>
                       {vmixConfig.enabled ? 'ACTIVE' : 'BYPASS'}
@@ -1014,22 +1016,55 @@ export const DirectorView: React.FC = () => {
                     {/* Quick presets for common USB / local IPs */}
                     <View style={styles.vmixPresetRow}>
                       <TouchableOpacity
-                        style={styles.vmixPresetChip}
+                        style={[
+                          styles.vmixPresetChip,
+                          vmixHostInput === '127.0.0.1' && styles.vmixPresetChipActive,
+                        ]}
                         onPress={() => handleSaveVmixHost('127.0.0.1')}
+                        activeOpacity={0.7}
                       >
-                        <Text style={styles.vmixPresetText}>Localhost</Text>
+                        <Text
+                          style={[
+                            styles.vmixPresetText,
+                            vmixHostInput === '127.0.0.1' && styles.vmixPresetTextActive,
+                          ]}
+                        >
+                          Localhost
+                        </Text>
                       </TouchableOpacity>
                       <TouchableOpacity
-                        style={styles.vmixPresetChip}
+                        style={[
+                          styles.vmixPresetChip,
+                          vmixHostInput === '172.20.10.2' && styles.vmixPresetChipActive,
+                        ]}
                         onPress={() => handleSaveVmixHost('172.20.10.2')}
+                        activeOpacity={0.7}
                       >
-                        <Text style={styles.vmixPresetText}>USB iPad (172.20.10.2)</Text>
+                        <Text
+                          style={[
+                            styles.vmixPresetText,
+                            vmixHostInput === '172.20.10.2' && styles.vmixPresetTextActive,
+                          ]}
+                        >
+                          USB iPad (172.20.10.2)
+                        </Text>
                       </TouchableOpacity>
                       <TouchableOpacity
-                        style={styles.vmixPresetChip}
+                        style={[
+                          styles.vmixPresetChip,
+                          vmixHostInput === '192.168.1.49' && styles.vmixPresetChipActive,
+                        ]}
                         onPress={() => handleSaveVmixHost('192.168.1.49')}
+                        activeOpacity={0.7}
                       >
-                        <Text style={styles.vmixPresetText}>LAN (192.168.1.49)</Text>
+                        <Text
+                          style={[
+                            styles.vmixPresetText,
+                            vmixHostInput === '192.168.1.49' && styles.vmixPresetTextActive,
+                          ]}
+                        >
+                          LAN (192.168.1.49)
+                        </Text>
                       </TouchableOpacity>
                     </View>
                   </View>
@@ -1046,75 +1081,72 @@ export const DirectorView: React.FC = () => {
                       autoCapitalize="none"
                     />
                     <TouchableOpacity
-                      style={styles.vmixTestBtn}
+                      style={[
+                        styles.vmixTestBtn,
+                        vmixStatus.connected && styles.vmixTestBtnConnected,
+                      ]}
                       onPress={() => vmixService.checkStatus()}
+                      activeOpacity={0.8}
                     >
-                      <Text style={styles.vmixTestBtnText}>POLL NOW</Text>
+                      <Text
+                        style={[
+                          styles.vmixTestBtnText,
+                          vmixStatus.connected && styles.vmixTestBtnTextConnected,
+                        ]}
+                      >
+                        {vmixStatus.connected ? '✓ CONNECTED' : 'POLL NOW'}
+                      </Text>
                     </TouchableOpacity>
                   </View>
                 </View>
 
-                {/* vMix Live Status Details */}
-                <View style={styles.vmixLiveStatusRow}>
-                  <Text style={styles.vmixLiveStatusLabel}>CURRENT VMIX STATE:</Text>
-                  <Text style={styles.vmixLiveStatusValue}>
+                {/* Clean Status Display Banner Showing Latency & Connectivity Feedback */}
+                <View
+                  style={[
+                    styles.vmixStatusBannerBox,
+                    vmixStatus.connected ? styles.vmixBannerConnected : styles.vmixBannerOffline,
+                  ]}
+                >
+                  <View style={styles.vmixBannerHeader}>
+                    <View style={styles.vmixBannerStatusPill}>
+                      <View
+                        style={[
+                          styles.vmixStatusDot,
+                          vmixStatus.connected ? styles.dotGreen : styles.dotRed,
+                        ]}
+                      />
+                      <Text
+                        style={[
+                          styles.vmixBannerStatusText,
+                          vmixStatus.connected ? styles.textGreen : styles.textRed,
+                        ]}
+                      >
+                        {vmixStatus.connected
+                          ? 'API CONNECTION ESTABLISHED'
+                          : 'STANDBY / WAITING FOR VMIX'}
+                      </Text>
+                    </View>
+                    <Text style={styles.vmixBannerTimestamp}>
+                      {vmixStatus.lastChecked
+                        ? `Last ping: ${new Date(vmixStatus.lastChecked).toLocaleTimeString()}`
+                        : 'Checking every 3s'}
+                    </Text>
+                  </View>
+
+                  <Text style={styles.vmixBannerMessage}>
                     {vmixStatus.connected
-                      ? `PGM: Input ${vmixStatus.activeInput || '-'} | PVW: Input ${vmixStatus.previewInput || '-'} (Polled every 3s)`
-                      : `Unreachable at http://${vmixConfig.host}:${vmixConfig.port}/api (${vmixStatus.error || 'Check IP'})`}
+                      ? `Live vMix state: Program input is ${vmixStatus.activeInput || 'None'} • Preview input is ${vmixStatus.previewInput || 'None'}. Full-duplex tally polling active at http://${vmixConfig.host}:${vmixConfig.port}/api.`
+                      : `Cannot reach vMix at http://${vmixConfig.host}:${vmixConfig.port}/api (${vmixStatus.error || 'Connection refused'}). Verify that vMix Web Controller is enabled in vMix Settings > Web Controller.`}
                   </Text>
-                </View>
 
-                {/* Camera-to-Input Mapping Table */}
-                <View style={styles.mappingSection}>
-                  <Text style={styles.mappingTitle}>
-                    STRICT 1-TO-1 VMIX INPUT MAPPING (LEFT-TO-RIGHT: CAM 1 = INPUT 1)
-                  </Text>
-                  <View style={styles.mappingGrid}>
-                    {activeCameras.map((camId) => {
-                      const num = camId.replace('cam', '');
-                      const isFeatured = parseInt(num, 10) <= 4;
-                      const mappedInput = cameraMapState[camId] || num;
-
-                      return (
-                        <View
-                          key={camId}
-                          style={[styles.mappingCard, isFeatured && styles.mappingCardFeatured]}
-                        >
-                          <View style={styles.mappingCardHeader}>
-                            <Text style={styles.mappingCamLabel}>{CAMERA_LABELS[camId] || `CAM ${num}`}</Text>
-                            <Text style={styles.mappingVoiceHint}>"cámara {num}"</Text>
-                          </View>
-
-                          <View style={styles.mappingInputRow}>
-                            <Text style={styles.mappingInputPrefix}>vMix Input:</Text>
-                            <TextInput
-                              style={styles.mappingTextInput}
-                              value={mappedInput}
-                              onChangeText={(val) => handleCameraMapChange(camId, val)}
-                              placeholder={num}
-                              placeholderTextColor="#777"
-                              autoCapitalize="none"
-                            />
-                          </View>
-
-                          {/* Quick vMix Test Trigger Buttons */}
-                          <View style={styles.mappingActionsRow}>
-                            <TouchableOpacity
-                              style={[styles.mappingActionBtn, styles.mappingBtnPvw]}
-                              onPress={() => vmixService.sendPreview(camId)}
-                            >
-                              <Text style={styles.mappingActionBtnText}>TEST PVW</Text>
-                            </TouchableOpacity>
-                            <TouchableOpacity
-                              style={[styles.mappingActionBtn, styles.mappingBtnCut]}
-                              onPress={() => vmixService.sendCut(camId)}
-                            >
-                              <Text style={styles.mappingActionBtnText}>TEST CUT</Text>
-                            </TouchableOpacity>
-                          </View>
-                        </View>
-                      );
-                    })}
+                  {/* Background 1-to-1 Router Badge */}
+                  <View style={styles.vmixRouterBadgeRow}>
+                    <View style={styles.vmixRouterPill}>
+                      <Text style={styles.vmixRouterPillIcon}>⚡</Text>
+                      <Text style={styles.vmixRouterPillText}>
+                        BACKGROUND 1-TO-1 ROUTER ACTIVE: CAM 1..{cameraCount} STRICTLY CORRELATED TO VMIX INPUTS 1..{cameraCount}
+                      </Text>
+                    </View>
                   </View>
                 </View>
               </View>
@@ -2029,124 +2061,105 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#374151',
   },
+  vmixTestBtnConnected: {
+    backgroundColor: '#064E3B',
+    borderColor: '#059669',
+  },
   vmixTestBtnText: {
     color: '#9CA3AF',
     fontSize: 10,
     fontWeight: '800',
   },
-  vmixLiveStatusRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    backgroundColor: '#151520',
-    padding: 10,
-    borderRadius: 6,
-    borderWidth: 1,
-    borderColor: '#202030',
-    flexWrap: 'wrap',
+  vmixTestBtnTextConnected: {
+    color: '#34D399',
   },
-  vmixLiveStatusLabel: {
-    color: '#8A8A9E',
-    fontSize: 10,
-    fontWeight: '800',
-  },
-  vmixLiveStatusValue: {
-    color: '#E0E0E0',
-    fontSize: 11,
-    fontWeight: '600',
-    flex: 1,
-  },
-  mappingSection: {
-    marginTop: 4,
-  },
-  mappingTitle: {
-    color: '#6F6F84',
-    fontSize: 10,
-    fontWeight: '800',
-    letterSpacing: 0.5,
-    marginBottom: 8,
-  },
-  mappingGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-  },
-  mappingCard: {
-    backgroundColor: '#171722',
-    borderWidth: 1,
-    borderColor: '#262638',
-    borderRadius: 6,
-    padding: 8,
-    flexBasis: '48%',
-    flexGrow: 1,
-    minWidth: 145,
-  },
-  mappingCardFeatured: {
+  vmixPresetChipActive: {
+    backgroundColor: '#1E3A8A',
     borderColor: '#3B82F6',
   },
-  mappingCardHeader: {
+  vmixPresetTextActive: {
+    color: '#FFFFFF',
+  },
+  vmixTabScrollCenter: {
+    alignItems: 'center',
+    justifyContent: 'flex-start',
+    paddingTop: 16,
+  },
+  vmixCardCentered: {
+    width: '100%',
+    maxWidth: 700,
+    backgroundColor: '#121218',
+    borderRadius: 10,
+    padding: 18,
+    borderWidth: 1,
+    borderColor: '#22222E',
+    alignSelf: 'center',
+  },
+  vmixStatusBannerBox: {
+    backgroundColor: '#151520',
+    padding: 14,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#202030',
+    gap: 10,
+    marginTop: 4,
+  },
+  vmixBannerConnected: {
+    borderColor: '#065F46',
+    backgroundColor: '#0A1E17',
+  },
+  vmixBannerOffline: {
+    borderColor: '#7F1D1D',
+    backgroundColor: '#1C0D10',
+  },
+  vmixBannerHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 6,
   },
-  mappingCamLabel: {
-    color: '#FFFFFF',
-    fontSize: 12,
-    fontWeight: '800',
-  },
-  mappingVoiceHint: {
-    color: '#888899',
-    fontSize: 10,
-    fontStyle: 'italic',
-  },
-  mappingInputRow: {
+  vmixBannerStatusPill: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    marginBottom: 6,
   },
-  mappingInputPrefix: {
-    color: '#A0A0B0',
+  vmixBannerStatusText: {
     fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 0.5,
+  },
+  vmixBannerTimestamp: {
+    color: '#9CA3AF',
+    fontSize: 10,
     fontWeight: '600',
   },
-  mappingTextInput: {
-    backgroundColor: '#111118',
+  vmixBannerMessage: {
+    color: '#D1D5DB',
+    fontSize: 11.5,
+    lineHeight: 17,
+  },
+  vmixRouterBadgeRow: {
+    marginTop: 4,
+    flexDirection: 'row',
+  },
+  vmixRouterPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: 'rgba(59, 130, 246, 0.12)',
     borderWidth: 1,
-    borderColor: '#33334A',
+    borderColor: '#2563EB',
     borderRadius: 4,
     paddingHorizontal: 8,
     paddingVertical: 4,
-    color: '#00E676',
-    fontSize: 12,
-    fontWeight: '700',
-    flex: 1,
-    textAlign: 'center',
   },
-  mappingActionsRow: {
-    flexDirection: 'row',
-    gap: 6,
+  vmixRouterPillIcon: {
+    fontSize: 11,
   },
-  mappingActionBtn: {
-    flex: 1,
-    paddingVertical: 5,
-    borderRadius: 4,
-    alignItems: 'center',
-    borderWidth: 1,
-  },
-  mappingBtnPvw: {
-    backgroundColor: '#0D2916',
-    borderColor: '#1B5E20',
-  },
-  mappingBtnCut: {
-    backgroundColor: '#301316',
-    borderColor: '#7F1D1D',
-  },
-  mappingActionBtnText: {
-    color: '#E0E0E0',
-    fontSize: 9,
+  vmixRouterPillText: {
+    color: '#60A5FA',
+    fontSize: 9.5,
     fontWeight: '800',
+    letterSpacing: 0.4,
   },
   // Tile buttons & vMix badges
   tileVmixBadge: {

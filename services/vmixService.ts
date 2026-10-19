@@ -22,16 +22,9 @@ export const DEFAULT_VMIX_CONFIG: VmixConfig = {
   enabled: true,
   host: '127.0.0.1',
   port: '8088',
-  cameraMap: {
-    cam1: '1',
-    cam2: '2',
-    cam3: '3',
-    cam4: '4',
-    cam5: '5',
-    cam6: '6',
-    cam7: '7',
-    cam8: '8',
-  },
+  cameraMap: Object.fromEntries(
+    Array.from({ length: 16 }, (_, i) => [`cam${i + 1}`, `${i + 1}`])
+  ),
 };
 
 type StatusListener = (status: VmixStatus) => void;
