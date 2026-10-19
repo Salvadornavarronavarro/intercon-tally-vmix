@@ -48,6 +48,20 @@ const DB_GRADUATION_MARKS = [
   { label: '-∞',  val: 0.0,  color: '#555566' },
 ];
 
+// Dedicated graduation markings aligned directly to Master Stereo LED ladders
+const MASTER_VU_DB_MARKS = [
+  { label: '+10', color: '#FF1744', isPeak: true },
+  { label: '+6',  color: '#FF3D00', isPeak: true },
+  { label: '0',   color: '#FFD600', isUnity: true },
+  { label: '-5',  color: '#AEEA00' },
+  { label: '-10', color: '#00E676' },
+  { label: '-18', color: '#00E676' },
+  { label: '-20', color: '#00C853' },
+  { label: '-30', color: '#009624' },
+  { label: '-40', color: '#007E33' },
+  { label: '-∞',  color: '#555566' },
+];
+
 const TOTAL_LED_SEGMENTS = 18;
 
 function volumeToDbString(vol: number): string {
@@ -1069,18 +1083,75 @@ export const AudioMixerView: React.FC<AudioMixerViewProps> = ({
               </View>
             )}
 
-            {/* RIGHT SIDE: Dual Stereo VU Meters (L and R LED Ladders) */}
+            {/* RIGHT SIDE: Dual Stereo VU Meters (L and R LED Ladders Flanked by dB Scales) */}
             <View style={styles.masterRightMetersGroup}>
-              {/* Left VU Meter */}
-              <View style={styles.masterMeterBlock}>
-                <Text style={styles.channelLRHeader}>L</Text>
-                {renderLedMeter(masterMeterL, masterPeakL, 6)}
+              {/* Left Flanking dB Scale */}
+              <View style={styles.masterVuScaleColumnWrapper}>
+                <View style={styles.scaleHeaderSpacer} />
+                <View style={styles.masterVuScaleColumn}>
+                  {MASTER_VU_DB_MARKS.map((m) => (
+                    <View key={`l-${m.label}`} style={styles.vuDbMarkRowLeft}>
+                      <Text
+                        style={[
+                          styles.vuDbText,
+                          { color: m.color },
+                          m.isUnity && styles.vuDbTextUnity,
+                        ]}
+                      >
+                        {m.label}
+                      </Text>
+                      <View
+                        style={[
+                          styles.vuDbTick,
+                          { backgroundColor: m.color },
+                          m.isUnity && styles.vuDbTickUnity,
+                        ]}
+                      />
+                    </View>
+                  ))}
+                </View>
               </View>
 
-              {/* Right VU Meter */}
-              <View style={styles.masterMeterBlock}>
-                <Text style={styles.channelLRHeader}>R</Text>
-                {renderLedMeter(masterMeterR, masterPeakR, 6)}
+              {/* Dual Stereo Meters Group (L and R) */}
+              <View style={styles.masterMetersCenterGroup}>
+                {/* Left VU Meter */}
+                <View style={styles.masterMeterBlock}>
+                  <Text style={styles.channelLRHeader}>L</Text>
+                  {renderLedMeter(masterMeterL, masterPeakL, 7)}
+                </View>
+
+                {/* Right VU Meter */}
+                <View style={styles.masterMeterBlock}>
+                  <Text style={styles.channelLRHeader}>R</Text>
+                  {renderLedMeter(masterMeterR, masterPeakR, 7)}
+                </View>
+              </View>
+
+              {/* Right Flanking dB Scale */}
+              <View style={styles.masterVuScaleColumnWrapper}>
+                <View style={styles.scaleHeaderSpacer} />
+                <View style={styles.masterVuScaleColumn}>
+                  {MASTER_VU_DB_MARKS.map((m) => (
+                    <View key={`r-${m.label}`} style={styles.vuDbMarkRowRight}>
+                      <View
+                        style={[
+                          styles.vuDbTick,
+                          { backgroundColor: m.color },
+                          m.isUnity && styles.vuDbTickUnity,
+                        ]}
+                      />
+                      <Text
+                        style={[
+                          styles.vuDbText,
+                          { color: m.color },
+                          m.isUnity && styles.vuDbTextUnity,
+                        ]}
+                      >
+                        {m.label}
+                      </Text>
+                    </View>
+                  ))}
+                </View>
               </View>
             </View>
           </View>
@@ -1766,7 +1837,7 @@ const styles = StyleSheet.create({
   /* MASTER SECTION (Red Accent Border)                                  */
   /* ================================================================== */
   masterContainer: {
-    width: 185,
+    width: 205,
     height: '100%',
     minHeight: 460,
     alignSelf: 'stretch',
@@ -1834,14 +1905,63 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'stretch',
     justifyContent: 'center',
-    gap: 5,
+    gap: 3,
     paddingLeft: 4,
     borderLeftWidth: 1,
     borderLeftColor: '#2C1822',
   },
+  masterMetersCenterGroup: {
+    flexDirection: 'row',
+    alignItems: 'stretch',
+    gap: 4,
+  },
   masterMeterBlock: {
     alignItems: 'center',
-    width: 13,
+    width: 9,
+  },
+  scaleHeaderSpacer: {
+    height: 13,
+  },
+  masterVuScaleColumnWrapper: {
+    flexDirection: 'column',
+    alignItems: 'stretch',
+    height: '100%',
+  },
+  masterVuScaleColumn: {
+    flex: 1,
+    justifyContent: 'space-between',
+    paddingVertical: 1,
+  },
+  vuDbMarkRowLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    gap: 2,
+  },
+  vuDbMarkRowRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-start',
+    gap: 2,
+  },
+  vuDbText: {
+    fontSize: 6.8,
+    fontWeight: '800',
+    letterSpacing: 0.2,
+    fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
+  },
+  vuDbTextUnity: {
+    fontWeight: '900',
+    fontSize: 7.5,
+  },
+  vuDbTick: {
+    width: 3,
+    height: 1,
+    borderRadius: 0.5,
+  },
+  vuDbTickUnity: {
+    width: 4.5,
+    height: 1.5,
   },
   channelLRHeader: {
     color: '#FF8A80',
