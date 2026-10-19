@@ -319,8 +319,9 @@ export const DirectorView: React.FC = () => {
         </View>
       </View>
 
-      {/* 3 Prominent Horizontal Navigation Tabs Header */}
+      {/* 4 Prominent Horizontal Navigation Tabs Header */}
       <View style={styles.tabNavContainer}>
+        {/* TAB 1: TALLY & CÁMARAS */}
         <TouchableOpacity
           style={[
             styles.tabButton,
@@ -335,6 +336,7 @@ export const DirectorView: React.FC = () => {
               styles.tabButtonText,
               activeTab === 'tally' && styles.tabButtonTextActive,
             ]}
+            numberOfLines={1}
           >
             TALLY & CÁMARAS
           </Text>
@@ -347,6 +349,7 @@ export const DirectorView: React.FC = () => {
           ) : null}
         </TouchableOpacity>
 
+        {/* TAB 2: CONTROL & VOZ */}
         <TouchableOpacity
           style={[
             styles.tabButton,
@@ -361,6 +364,7 @@ export const DirectorView: React.FC = () => {
               styles.tabButtonText,
               activeTab === 'control' && styles.tabButtonTextActive,
             ]}
+            numberOfLines={1}
           >
             CONTROL & VOZ
           </Text>
@@ -387,6 +391,7 @@ export const DirectorView: React.FC = () => {
               styles.tabButtonText,
               activeTab === 'audio' && styles.tabButtonTextActive,
             ]}
+            numberOfLines={1}
           >
             CONTROL DE SONIDO
           </Text>
@@ -407,6 +412,7 @@ export const DirectorView: React.FC = () => {
               styles.tabButtonText,
               activeTab === 'vmix' && styles.tabButtonTextActive,
             ]}
+            numberOfLines={1}
           >
             CONEXIÓN VMIX
           </Text>
@@ -427,6 +433,7 @@ export const DirectorView: React.FC = () => {
                 styles.tabVmixText,
                 vmixStatus.connected ? styles.textGreen : styles.textRed,
               ]}
+              numberOfLines={1}
             >
               {vmixStatus.connected ? 'ONLINE' : 'OFFLINE'}
             </Text>
@@ -1589,51 +1596,6 @@ const styles = StyleSheet.create({
   emptyText: {
     color: '#656578',
     fontSize: 13,
-  },
-  bottomBar: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
-    padding: 14,
-    backgroundColor: '#111116',
-    borderTopWidth: 1,
-    borderTopColor: '#1F1F28',
-  },
-  talkButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 14,
-    borderRadius: 10,
-    gap: 12,
-  },
-  talkButtonMuted: {
-    backgroundColor: '#22222C',
-    borderWidth: 1,
-    borderColor: '#373748',
-  },
-  talkButtonLive: {
-    backgroundColor: '#00C853',
-    shadowColor: '#00C853',
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.5,
-    shadowRadius: 10,
-    elevation: 6,
-  },
-  talkButtonIcon: {
-    fontSize: 24,
-  },
-  talkButtonLabel: {
-    color: '#FFFFFF',
-    fontWeight: '900',
-    fontSize: 14,
-    letterSpacing: 0.5,
-  },
-  talkButtonState: {
-    color: '#E0E0E0',
-    fontSize: 11,
-    fontWeight: '600',
   },
   voicePanel: {
     backgroundColor: '#121218',
