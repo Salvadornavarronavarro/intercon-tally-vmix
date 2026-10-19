@@ -17,15 +17,20 @@ export interface AudioMixerViewProps {
 interface ChannelState {
   id: string; // 'cam1' ... 'cam8'
   num: number; // 1 .. 8
-  volume: number; // 0 to 1 (0 = -inf, 0.75 = 0dB, 1.0 = +10dB)
+  mode: 'stereo' | 'split'; // Default: 'stereo'
+  volume: number; // 0 to 1 (Stereo unified gain, 0.75 = 0dB)
+  volumeA: number; // 0 to 1 (Split Mono Ch A / L gain)
+  volumeB: number; // 0 to 1 (Split Mono Ch B / R gain)
   pan: number; // -100 (full L) to +100 (full R), 0 = Center
   muted: boolean;
   solo: boolean; // PFL monitor
-  meterLevel: number; // 0 to 1
-  peakLevel: number;
+  meterLevelL: number; // 0 to 1
+  meterLevelR: number; // 0 to 1
+  peakLevelL: number;
+  peakLevelR: number;
 }
 
-// Exact dB graduation markings requested
+// Exact dB graduation markings
 const DB_GRADUATION_MARKS = [
   { label: '+10', val: 1.0, color: '#FF1744' },
   { label: '+6',  val: 0.91, color: '#FF3D00' },
@@ -67,19 +72,24 @@ export const AudioMixerView: React.FC<AudioMixerViewProps> = ({
   activeProgramCamera,
   activePreviewCamera,
 }) => {
-  // 8 Channels initialized
+  // 8 Channels initialized (default: STEREO mode)
   const [channels, setChannels] = useState<ChannelState[]>(() =>
     Array.from({ length: 8 }, (_, i) => {
       const camId = `cam${i + 1}`;
       return {
         id: camId,
         num: i + 1,
+        mode: 'stereo',
         volume: 0.75, // 0 dB unity gain default
+        volumeA: 0.75,
+        volumeB: 0.75,
         pan: 0, // Center
         muted: !!cameraMuteMap[camId],
         solo: false,
-        meterLevel: 0.15,
-        peakLevel: 0.25,
+        meterLevelL: 0.15,
+        meterLevelR: 0.15,
+        peakLevelL: 0.25,
+        peakLevelR: 0.25,
       };
     })
   );
@@ -122,8 +132,10 @@ export const AudioMixerView: React.FC<AudioMixerViewProps> = ({
           if (ch.muted || masterMuted) {
             return {
               ...ch,
-              meterLevel: Math.max(0, ch.meterLevel * 0.65),
-              peakLevel: Math.max(0, ch.peakLevel * 0.8),
+              meterLevelL: Math.max(0, ch.meterLevelL * 0.65),
+              meterLevelR: Math.max(0, ch.meterLevelR * 0.65),
+              peakLevelL: Math.max(0, ch.peakLevelL * 0.8),
+              peakLevelR: Math.max(0, ch.peakLevelR * 0.8),
             };
           }
 
@@ -137,17 +149,33 @@ export const AudioMixerView: React.FC<AudioMixerViewProps> = ({
             (Math.random() - 0.5) * 0.12;
 
           const baseSignal = Math.max(0.04, Math.min(0.96, 0.45 + boost + wave));
-          const effectiveLevel = baseSignal * ch.volume;
+          let levelL = 0;
+          let levelR = 0;
 
-          activeSum += effectiveLevel;
+          if (ch.mode === 'split') {
+            // Distinct levels for Ch A (Left) and Ch B (Right)
+            levelL = baseSignal * ch.volumeA;
+            levelR = baseSignal * ch.volumeB * 0.95;
+          } else {
+            // Stereo unified level with pan attenuation
+            const panFactorL = ch.pan > 0 ? 1 - (ch.pan / 100) * 0.35 : 1;
+            const panFactorR = ch.pan < 0 ? 1 - (Math.abs(ch.pan) / 100) * 0.35 : 1;
+            levelL = baseSignal * ch.volume * panFactorL;
+            levelR = baseSignal * ch.volume * panFactorR;
+          }
+
+          activeSum += (levelL + levelR) / 2;
           count++;
 
-          const peak = Math.max(effectiveLevel, ch.peakLevel * 0.95);
+          const peakL = Math.max(levelL, ch.peakLevelL * 0.95);
+          const peakR = Math.max(levelR, ch.peakLevelR * 0.95);
 
           return {
             ...ch,
-            meterLevel: effectiveLevel,
-            peakLevel: peak,
+            meterLevelL: levelL,
+            meterLevelR: levelR,
+            peakLevelL: peakL,
+            peakLevelR: peakR,
           };
         });
 
@@ -192,10 +220,39 @@ export const AudioMixerView: React.FC<AudioMixerViewProps> = ({
     );
   };
 
+  const handleToggleMode = useCallback((camId: string) => {
+    setChannels((prev) =>
+      prev.map((ch) => {
+        if (ch.id !== camId) return ch;
+        const nextMode = ch.mode === 'stereo' ? 'split' : 'stereo';
+        return {
+          ...ch,
+          mode: nextMode,
+          volumeA: nextMode === 'split' ? ch.volume : ch.volumeA,
+          volumeB: nextMode === 'split' ? ch.volume : ch.volumeB,
+        };
+      })
+    );
+  }, []);
+
   const handleSetVolume = useCallback((camId: string, newVol: number) => {
     const clamped = Math.max(0, Math.min(1, newVol));
     setChannels((prev) =>
       prev.map((ch) => (ch.id === camId ? { ...ch, volume: clamped } : ch))
+    );
+  }, []);
+
+  const handleSetVolumeA = useCallback((camId: string, newVol: number) => {
+    const clamped = Math.max(0, Math.min(1, newVol));
+    setChannels((prev) =>
+      prev.map((ch) => (ch.id === camId ? { ...ch, volumeA: clamped } : ch))
+    );
+  }, []);
+
+  const handleSetVolumeB = useCallback((camId: string, newVol: number) => {
+    const clamped = Math.max(0, Math.min(1, newVol));
+    setChannels((prev) =>
+      prev.map((ch) => (ch.id === camId ? { ...ch, volumeB: clamped } : ch))
     );
   }, []);
 
@@ -230,7 +287,7 @@ export const AudioMixerView: React.FC<AudioMixerViewProps> = ({
   };
 
   // Pointer / Touch Fader Interactions
-  const updateFaderFromPointer = (e: any, camId?: string) => {
+  const updateFaderFromPointer = (e: any, targetId?: string) => {
     if (Platform.OS === 'web' && e) {
       const nativeEvent = e.nativeEvent || e;
       const targetElement = e.currentTarget || e.target;
@@ -239,10 +296,17 @@ export const AudioMixerView: React.FC<AudioMixerViewProps> = ({
         const clientY = nativeEvent.clientY !== undefined ? nativeEvent.clientY : nativeEvent.pageY;
         const relativeY = clientY - rect.top;
         const ratio = 1 - Math.max(0, Math.min(1, relativeY / rect.height));
-        if (camId) {
-          handleSetVolume(camId, ratio);
-        } else {
+
+        if (!targetId || targetId === 'master') {
           handleSetMasterVolume(ratio);
+        } else if (targetId.endsWith('_A')) {
+          const camId = targetId.replace('_A', '');
+          handleSetVolumeA(camId, ratio);
+        } else if (targetId.endsWith('_B')) {
+          const camId = targetId.replace('_B', '');
+          handleSetVolumeB(camId, ratio);
+        } else {
+          handleSetVolume(targetId, ratio);
         }
       }
     }
@@ -253,7 +317,6 @@ export const AudioMixerView: React.FC<AudioMixerViewProps> = ({
     const now = Date.now();
     const lastClick = lastKnobClickTimeRef.current[camId] || 0;
     if (now - lastClick < 350) {
-      // Double click / tap detected: Reset to Center (0)
       handleSetPan(camId, 0);
       lastKnobClickTimeRef.current[camId] = 0;
       return;
@@ -298,21 +361,17 @@ export const AudioMixerView: React.FC<AudioMixerViewProps> = ({
   };
 
   // Render High-Fidelity Discrete LED Ladder
-  const renderLedMeter = (level: number, peak: number) => {
+  const renderLedMeter = (level: number, peak: number, width: number = 7) => {
     const activeSegments = Math.round(level * TOTAL_LED_SEGMENTS);
     const peakSegment = Math.min(TOTAL_LED_SEGMENTS - 1, Math.round(peak * TOTAL_LED_SEGMENTS));
 
     return (
-      <View style={styles.meterTrack}>
+      <View style={[styles.meterTrack, { width }]}>
         {Array.from({ length: TOTAL_LED_SEGMENTS }).map((_, i) => {
           const segIdx = TOTAL_LED_SEGMENTS - 1 - i; // Top (17) to Bottom (0)
           const isLit = segIdx < activeSegments;
           const isPeak = segIdx === peakSegment && peak > 0.04;
 
-          // Segment Colors:
-          // Top 4 segments (14 to 17): Bright Peak Red (+0 to +10 dB)
-          // Middle 4 segments (10 to 13): Warm Amber / Yellow (-10 to 0 dB)
-          // Lower 10 segments (0 to 9): Deep Green (-inf to -10 dB)
           let activeColor = '#00E676';
           let offColor = '#0D2315';
           let glowShadow = '0 0 6px rgba(0, 230, 118, 0.85)';
@@ -351,7 +410,7 @@ export const AudioMixerView: React.FC<AudioMixerViewProps> = ({
       <View style={styles.consoleTopRibbon}>
         <View style={styles.ribbonLeft}>
           <Text style={styles.ribbonTitle}>CONTROL DE SONIDO</Text>
-          <Text style={styles.ribbonSubtitle}>8 CANALES DE CÁMARA • MASTER ESTÉREO DUAL</Text>
+          <Text style={styles.ribbonSubtitle}>8 CANALES DE CÁMARA • STEREO / DUAL-MONO SPLIT</Text>
         </View>
 
         <View style={styles.ribbonRight}>
@@ -373,6 +432,7 @@ export const AudioMixerView: React.FC<AudioMixerViewProps> = ({
           {channels.map((ch) => {
             const isPgm = activeProgramCamera === ch.id;
             const isPvw = activePreviewCamera === ch.id;
+            const isSplit = ch.mode === 'split';
 
             // Rotation angle: -100 (L) = -135deg, 0 (C) = 0deg, +100 (R) = +135deg
             const knobAngle = (ch.pan / 100) * 135;
@@ -384,19 +444,42 @@ export const AudioMixerView: React.FC<AudioMixerViewProps> = ({
                   styles.stripCard,
                   isPgm && styles.stripCardPgm,
                   isPvw && styles.stripCardPvw,
+                  isSplit && styles.stripCardSplit,
                 ]}
               >
-                {/* 1. TOP HEADER: strictly consecutive numbers 1 to 8 */}
+                {/* 1. TOP HEADER: Channel Number + STEREO/SPLIT Mode Toggle */}
                 <View style={styles.stripHeader}>
-                  <View
-                    style={[
-                      styles.chNumberBadge,
-                      isPgm && styles.chBadgePgm,
-                      isPvw && styles.chBadgePvw,
-                    ]}
-                  >
-                    <Text style={styles.chNumberText}>{ch.num}</Text>
+                  <View style={styles.headerTopRow}>
+                    <View
+                      style={[
+                        styles.chNumberBadge,
+                        isPgm && styles.chBadgePgm,
+                        isPvw && styles.chBadgePvw,
+                      ]}
+                    >
+                      <Text style={styles.chNumberText}>{ch.num}</Text>
+                    </View>
+
+                    {/* Mode Switcher Button: STEREO / SPLIT */}
+                    <TouchableOpacity
+                      style={[
+                        styles.modeToggleButton,
+                        isSplit ? styles.modeToggleSplit : styles.modeToggleStereo,
+                      ]}
+                      onPress={() => handleToggleMode(ch.id)}
+                      activeOpacity={0.8}
+                    >
+                      <Text
+                        style={[
+                          styles.modeToggleText,
+                          isSplit ? styles.modeTextSplit : styles.modeTextStereo,
+                        ]}
+                      >
+                        {isSplit ? 'SPLIT' : 'STEREO'}
+                      </Text>
+                    </TouchableOpacity>
                   </View>
+
                   {isPgm ? (
                     <View style={styles.liveTag}>
                       <Text style={styles.liveTagText}>ON AIR</Text>
@@ -404,46 +487,55 @@ export const AudioMixerView: React.FC<AudioMixerViewProps> = ({
                   ) : null}
                 </View>
 
-                {/* 2. REALISTIC SKEUOMORPHIC ROTARY PAN KNOB (Marked 'L' and 'R' with center dot) */}
-                <View style={styles.panSection}>
-                  <View style={styles.panDialSurround}>
-                    {/* Top center reference dot at 12 o'clock */}
-                    <View style={styles.panCenterRefDot} />
+                {/* 2. PAN SECTION / SUB-TRACK HEADERS */}
+                {!isSplit ? (
+                  /* STEREO: Rotary Pan Knob */
+                  <View style={styles.panSection}>
+                    <View style={styles.panDialSurround}>
+                      <View style={styles.panCenterRefDot} />
 
-                    <View style={styles.panKnobRow}>
-                      <Text style={styles.panLabelL}>L</Text>
+                      <View style={styles.panKnobRow}>
+                        <Text style={styles.panLabelL}>L</Text>
 
-                      {/* 3D Skeuomorphic Metallic Dial */}
-                      <TouchableOpacity
-                        style={styles.knob3DOuter}
-                        activeOpacity={0.9}
-                        // @ts-ignore
-                        onPointerDown={(e: any) => handleKnobPointerDown(e, ch.id, ch.pan)}
-                      >
-                        {/* Cylindrical beveled dial body */}
-                        <View style={styles.knob3DBezel}>
-                          <View
-                            style={[
-                              styles.knob3DFace,
-                              {
-                                transform: [{ rotate: `${knobAngle}deg` }],
-                              },
-                            ]}
-                          >
-                            {/* Crisp metallic white pointer line indicating angle */}
-                            <View style={styles.knobPointerLine} />
+                        <TouchableOpacity
+                          style={styles.knob3DOuter}
+                          activeOpacity={0.9}
+                          // @ts-ignore
+                          onPointerDown={(e: any) => handleKnobPointerDown(e, ch.id, ch.pan)}
+                        >
+                          <View style={styles.knob3DBezel}>
+                            <View
+                              style={[
+                                styles.knob3DFace,
+                                {
+                                  transform: [{ rotate: `${knobAngle}deg` }],
+                                },
+                              ]}
+                            >
+                              <View style={styles.knobPointerLine} />
+                            </View>
                           </View>
-                        </View>
-                      </TouchableOpacity>
+                        </TouchableOpacity>
 
-                      <Text style={styles.panLabelR}>R</Text>
+                        <Text style={styles.panLabelR}>R</Text>
+                      </View>
+                    </View>
+
+                    <Text style={styles.panDigitalText}>{panToString(ch.pan)}</Text>
+                  </View>
+                ) : (
+                  /* SPLIT: Sub-track Labels Ch A (L) & Ch B (R) */
+                  <View style={styles.splitSubPillRow}>
+                    <View style={styles.splitSubPillA}>
+                      <Text style={styles.splitSubPillText}>CH A (L)</Text>
+                    </View>
+                    <View style={styles.splitSubPillB}>
+                      <Text style={styles.splitSubPillText}>CH B (R)</Text>
                     </View>
                   </View>
+                )}
 
-                  <Text style={styles.panDigitalText}>{panToString(ch.pan)}</Text>
-                </View>
-
-                {/* 3. PROMINENT MUTE BUTTON: Glowing neon-red fill when engaged */}
+                {/* 3. MUTE BUTTON */}
                 <TouchableOpacity
                   style={[
                     styles.muteButton,
@@ -462,90 +554,198 @@ export const AudioMixerView: React.FC<AudioMixerViewProps> = ({
                   </Text>
                 </TouchableOpacity>
 
-                {/* 4. HARDWARE BROADCAST FADER & MULTI-SEGMENT LED LADDER */}
-                <View style={styles.faderAndMeterArea}>
-                  {/* Detailed dB Graduation Markings */}
-                  <View style={styles.dbScaleColumn}>
-                    {DB_GRADUATION_MARKS.map((m) => (
-                      <View key={m.label} style={styles.dbMarkRow}>
-                        <Text
-                          style={[
-                            styles.dbLabelText,
-                            { color: m.color },
-                            m.isUnity && styles.dbLabelUnity,
-                          ]}
-                        >
-                          {m.label}
-                        </Text>
-                        <View
-                          style={[
-                            styles.dbTickMark,
-                            { backgroundColor: m.color },
-                            m.isUnity && styles.dbTickUnity,
-                          ]}
-                        />
-                      </View>
-                    ))}
-                  </View>
-
-                  {/* Recessed Vertical Slot Track & Metallic Fader Cap */}
-                  <View
-                    style={styles.faderTrackContainer}
-                    // @ts-ignore: React Native Web pointer event
-                    onPointerDown={(e: any) => {
-                      draggingTargetRef.current = { type: 'fader', id: ch.id };
-                      updateFaderFromPointer(e, ch.id);
-                    }}
-                    // @ts-ignore: React Native Web pointer event
-                    onPointerMove={(e: any) => {
-                      if (draggingTargetRef.current?.type === 'fader' && draggingTargetRef.current.id === ch.id) {
-                        updateFaderFromPointer(e, ch.id);
-                      }
-                    }}
-                    // @ts-ignore: React Native Web pointer event
-                    onPointerUp={() => {
-                      draggingTargetRef.current = null;
-                    }}
-                  >
-                    {/* Deep Recessed Slot Track */}
-                    <View style={styles.faderSlotTrack}>
-                      {/* Unity Gain Notch (0 dB) */}
-                      <View style={styles.faderUnityNotch} />
+                {/* 4. DYNAMIC FADER & VU METER AREA (STEREO vs SPLIT DUAL-MONO) */}
+                {!isSplit ? (
+                  /* STEREO MODE: dB Scale + Unified Fader + Dual L/R Meters */
+                  <View style={styles.faderAndMeterArea}>
+                    {/* Detailed dB Graduation Markings */}
+                    <View style={styles.dbScaleColumn}>
+                      {DB_GRADUATION_MARKS.map((m) => (
+                        <View key={m.label} style={styles.dbMarkRow}>
+                          <Text
+                            style={[
+                              styles.dbLabelText,
+                              { color: m.color },
+                              m.isUnity && styles.dbLabelUnity,
+                            ]}
+                          >
+                            {m.label}
+                          </Text>
+                          <View
+                            style={[
+                              styles.dbTickMark,
+                              { backgroundColor: m.color },
+                              m.isUnity && styles.dbTickUnity,
+                            ]}
+                          />
+                        </View>
+                      ))}
                     </View>
 
-                    {/* High-Fidelity Silver Brushed Aluminum Fader Cap */}
+                    {/* Central Metallic Fader Track */}
                     <View
-                      style={[
-                        styles.faderCapMetallic,
-                        {
-                          bottom: `${ch.volume * 84}%`,
-                        },
-                      ]}
+                      style={styles.faderTrackContainer}
+                      // @ts-ignore
+                      onPointerDown={(e: any) => {
+                        draggingTargetRef.current = { type: 'fader', id: ch.id };
+                        updateFaderFromPointer(e, ch.id);
+                      }}
+                      // @ts-ignore
+                      onPointerMove={(e: any) => {
+                        if (draggingTargetRef.current?.type === 'fader' && draggingTargetRef.current.id === ch.id) {
+                          updateFaderFromPointer(e, ch.id);
+                        }
+                      }}
+                      // @ts-ignore
+                      onPointerUp={() => {
+                        draggingTargetRef.current = null;
+                      }}
                     >
-                      {/* Top Beveled Highlight */}
-                      <View style={styles.faderCapTopBevel} />
-                      {/* Grip Grooves */}
-                      <View style={styles.faderCapGripGroove} />
-                      {/* Center Horizontal Index Line */}
-                      <View style={styles.faderCapCenterIndexLine} />
-                      <View style={styles.faderCapGripGroove} />
-                      {/* Bottom Beveled Shadow */}
-                      <View style={styles.faderCapBottomBevel} />
+                      <View style={styles.faderSlotTrack}>
+                        <View style={styles.faderUnityNotch} />
+                      </View>
+
+                      {/* Silver Brushed Aluminum Fader Cap */}
+                      <View
+                        style={[
+                          styles.faderCapMetallic,
+                          {
+                            bottom: `${ch.volume * 84}%`,
+                          },
+                        ]}
+                      >
+                        <View style={styles.faderCapTopBevel} />
+                        <View style={styles.faderCapGripGroove} />
+                        <View style={styles.faderCapCenterIndexLine} />
+                        <View style={styles.faderCapGripGroove} />
+                        <View style={styles.faderCapBottomBevel} />
+                      </View>
+                    </View>
+
+                    {/* Dual Stereo VU Meter Bars (L / R) */}
+                    <View style={styles.stereoDualMeterCol}>
+                      <View style={styles.stereoSubMeter}>
+                        <Text style={styles.microMeterLabel}>L</Text>
+                        {renderLedMeter(ch.meterLevelL, ch.peakLevelL, 5)}
+                      </View>
+                      <View style={styles.stereoSubMeter}>
+                        <Text style={styles.microMeterLabel}>R</Text>
+                        {renderLedMeter(ch.meterLevelR, ch.peakLevelR, 5)}
+                      </View>
                     </View>
                   </View>
+                ) : (
+                  /* SPLIT DUAL-MONO MODE: Two Discrete Sub-tracks (Ch A / L & Ch B / R) */
+                  <View style={styles.splitFadersArea}>
+                    {/* Sub-track A (Ch 1 / L) */}
+                    <View style={styles.splitSubTrack}>
+                      <View style={styles.splitSubTrackBody}>
+                        {/* Fader A */}
+                        <View
+                          style={styles.splitFaderContainer}
+                          // @ts-ignore
+                          onPointerDown={(e: any) => {
+                            const target = ch.id + '_A';
+                            draggingTargetRef.current = { type: 'fader', id: target };
+                            updateFaderFromPointer(e, target);
+                          }}
+                          // @ts-ignore
+                          onPointerMove={(e: any) => {
+                            const target = ch.id + '_A';
+                            if (draggingTargetRef.current?.type === 'fader' && draggingTargetRef.current.id === target) {
+                              updateFaderFromPointer(e, target);
+                            }
+                          }}
+                          // @ts-ignore
+                          onPointerUp={() => {
+                            draggingTargetRef.current = null;
+                          }}
+                        >
+                          <View style={styles.splitSlotTrack}>
+                            <View style={styles.faderUnityNotch} />
+                          </View>
 
-                  {/* Multi-Segment LED Ladder VU Meter */}
-                  <View style={styles.meterColumn}>
-                    {renderLedMeter(ch.meterLevel, ch.peakLevel)}
+                          <View
+                            style={[
+                              styles.splitFaderCapMetallic,
+                              {
+                                bottom: `${ch.volumeA * 84}%`,
+                              },
+                            ]}
+                          >
+                            <View style={styles.splitCapIndexLine} />
+                          </View>
+                        </View>
+
+                        {/* Meter A */}
+                        <View style={styles.splitMeterContainer}>
+                          {renderLedMeter(ch.meterLevelL, ch.peakLevelL, 5)}
+                        </View>
+                      </View>
+                    </View>
+
+                    {/* Subtle Track Divider */}
+                    <View style={styles.splitTrackDivider} />
+
+                    {/* Sub-track B (Ch 2 / R) */}
+                    <View style={styles.splitSubTrack}>
+                      <View style={styles.splitSubTrackBody}>
+                        {/* Fader B */}
+                        <View
+                          style={styles.splitFaderContainer}
+                          // @ts-ignore
+                          onPointerDown={(e: any) => {
+                            const target = ch.id + '_B';
+                            draggingTargetRef.current = { type: 'fader', id: target };
+                            updateFaderFromPointer(e, target);
+                          }}
+                          // @ts-ignore
+                          onPointerMove={(e: any) => {
+                            const target = ch.id + '_B';
+                            if (draggingTargetRef.current?.type === 'fader' && draggingTargetRef.current.id === target) {
+                              updateFaderFromPointer(e, target);
+                            }
+                          }}
+                          // @ts-ignore
+                          onPointerUp={() => {
+                            draggingTargetRef.current = null;
+                          }}
+                        >
+                          <View style={styles.splitSlotTrack}>
+                            <View style={styles.faderUnityNotch} />
+                          </View>
+
+                          <View
+                            style={[
+                              styles.splitFaderCapMetallic,
+                              {
+                                bottom: `${ch.volumeB * 84}%`,
+                              },
+                            ]}
+                          >
+                            <View style={styles.splitCapIndexLine} />
+                          </View>
+                        </View>
+
+                        {/* Meter B */}
+                        <View style={styles.splitMeterContainer}>
+                          {renderLedMeter(ch.meterLevelR, ch.peakLevelR, 5)}
+                        </View>
+                      </View>
+                    </View>
                   </View>
-                </View>
+                )}
 
                 {/* Digital Gain Readout */}
                 <View style={styles.dbReadoutBox}>
-                  <Text style={styles.dbReadoutText}>{volumeToDbString(ch.volume)}</Text>
+                  <Text style={styles.dbReadoutText}>
+                    {isSplit
+                      ? `A:${volumeToDbString(ch.volumeA).replace(' dB', '')} B:${volumeToDbString(ch.volumeB).replace(' dB', '')}`
+                      : volumeToDbString(ch.volume)}
+                  </Text>
                 </View>
 
-                {/* 5. BOTTOM MONITORING BUTTON: Strictly 'CAM 1' to 'CAM 8' (zero intercom references) */}
+                {/* 5. BOTTOM MONITORING BUTTON */}
                 <TouchableOpacity
                   style={[
                     styles.monitorButton,
@@ -663,13 +863,13 @@ export const AudioMixerView: React.FC<AudioMixerViewProps> = ({
               {/* Left VU Meter */}
               <View style={styles.masterMeterBlock}>
                 <Text style={styles.channelLRHeader}>L</Text>
-                {renderLedMeter(masterMeterL, masterPeakL)}
+                {renderLedMeter(masterMeterL, masterPeakL, 6)}
               </View>
 
               {/* Right VU Meter */}
               <View style={styles.masterMeterBlock}>
                 <Text style={styles.channelLRHeader}>R</Text>
-                {renderLedMeter(masterMeterR, masterPeakR)}
+                {renderLedMeter(masterMeterR, masterPeakR, 6)}
               </View>
             </View>
           </View>
@@ -852,16 +1052,25 @@ const styles = StyleSheet.create({
     borderColor: '#00E676',
     backgroundColor: '#0D1713',
   },
+  stripCardSplit: {
+    borderColor: '#3D3422',
+  },
   stripHeader: {
     width: '100%',
     alignItems: 'center',
     marginBottom: 2,
   },
-  chNumberBadge: {
+  headerTopRow: {
     width: '100%',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+  },
+  chNumberBadge: {
+    flex: 1,
     backgroundColor: '#1A1A26',
     borderRadius: 4,
-    paddingVertical: 3,
+    paddingVertical: 2.5,
     alignItems: 'center',
     borderWidth: 1,
     borderColor: '#2A2A3E',
@@ -876,9 +1085,36 @@ const styles = StyleSheet.create({
   },
   chNumberText: {
     color: '#FFFFFF',
-    fontSize: 12,
+    fontSize: 11.5,
     fontWeight: '900',
     letterSpacing: 0.5,
+  },
+  modeToggleButton: {
+    paddingHorizontal: 5,
+    paddingVertical: 3,
+    borderRadius: 3.5,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  modeToggleStereo: {
+    backgroundColor: '#142129',
+    borderColor: '#00B0FF',
+  },
+  modeToggleSplit: {
+    backgroundColor: '#2A1F10',
+    borderColor: '#FFB300',
+  },
+  modeToggleText: {
+    fontSize: 7.5,
+    fontWeight: '900',
+    letterSpacing: 0.4,
+  },
+  modeTextStereo: {
+    color: '#40C4FF',
+  },
+  modeTextSplit: {
+    color: '#FFB300',
   },
   liveTag: {
     marginTop: 2,
@@ -892,7 +1128,7 @@ const styles = StyleSheet.create({
     fontSize: 7,
     fontWeight: '900',
   },
-  /* 3D Skeuomorphic Rotary Pan Section */
+  /* 3D Skeuomorphic Rotary Pan Section (Stereo Mode) */
   panSection: {
     width: '100%',
     alignItems: 'center',
@@ -928,9 +1164,9 @@ const styles = StyleSheet.create({
     fontWeight: '900',
   },
   knob3DOuter: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
+    width: 32,
+    height: 32,
+    borderRadius: 16,
     backgroundColor: '#15161E',
     borderWidth: 1.5,
     borderColor: '#2F3242',
@@ -941,9 +1177,9 @@ const styles = StyleSheet.create({
     cursor: 'pointer' as any,
   },
   knob3DBezel: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
+    width: 26,
+    height: 26,
+    borderRadius: 13,
     backgroundColor: '#20222D',
     borderWidth: 1,
     borderColor: '#3D4052',
@@ -951,19 +1187,19 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   knob3DFace: {
-    width: 22,
-    height: 22,
-    borderRadius: 11,
+    width: 20,
+    height: 20,
+    borderRadius: 10,
     backgroundColor: '#12131A',
     alignItems: 'center',
     justifyContent: 'flex-start',
     paddingTop: 1.5,
   },
   knobPointerLine: {
-    width: 2.5,
-    height: 8,
+    width: 2,
+    height: 7,
     backgroundColor: '#FFFFFF',
-    borderRadius: 1.25,
+    borderRadius: 1,
     // @ts-ignore web shadow
     boxShadow: '0 0 3px rgba(255, 255, 255, 0.9)',
   },
@@ -972,6 +1208,37 @@ const styles = StyleSheet.create({
     fontSize: 8,
     fontWeight: '800',
     marginTop: 2,
+  },
+  /* Split Mode Sub-Pills */
+  splitSubPillRow: {
+    width: '100%',
+    flexDirection: 'row',
+    gap: 2,
+    marginVertical: 4,
+  },
+  splitSubPillA: {
+    flex: 1,
+    backgroundColor: '#1E1711',
+    borderWidth: 1,
+    borderColor: '#FFB300',
+    borderRadius: 3,
+    paddingVertical: 2,
+    alignItems: 'center',
+  },
+  splitSubPillB: {
+    flex: 1,
+    backgroundColor: '#1E1711',
+    borderWidth: 1,
+    borderColor: '#FFB300',
+    borderRadius: 3,
+    paddingVertical: 2,
+    alignItems: 'center',
+  },
+  splitSubPillText: {
+    color: '#FFD54F',
+    fontSize: 7.5,
+    fontWeight: '900',
+    letterSpacing: 0.3,
   },
   /* Mute Button */
   muteButton: {
@@ -1004,21 +1271,21 @@ const styles = StyleSheet.create({
   muteTextActive: {
     color: '#FFFFFF',
   },
-  /* Fader & Meter Area */
+  /* Fader & Meter Area (Stereo) */
   faderAndMeterArea: {
     flex: 1,
     width: '100%',
     flexDirection: 'row',
     alignItems: 'stretch',
     justifyContent: 'center',
-    marginVertical: 4,
-    gap: 4,
+    marginVertical: 3,
+    gap: 3,
   },
   dbScaleColumn: {
     justifyContent: 'space-between',
     alignItems: 'flex-end',
     paddingVertical: 3,
-    width: 20,
+    width: 18,
   },
   dbMarkRow: {
     flexDirection: 'row',
@@ -1050,7 +1317,7 @@ const styles = StyleSheet.create({
     position: 'relative',
     alignItems: 'center',
     justifyContent: 'center',
-    minWidth: 26,
+    minWidth: 24,
     cursor: 'pointer' as any,
   },
   faderSlotTrack: {
@@ -1073,11 +1340,10 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFD600',
     opacity: 0.75,
   },
-  /* High-Fidelity Silver Brushed Aluminum Fader Cap */
   faderCapMetallic: {
     position: 'absolute',
-    width: 28,
-    height: 44,
+    width: 26,
+    height: 42,
     backgroundColor: '#B4B4BE',
     borderRadius: 3.5,
     borderWidth: 1.5,
@@ -1095,13 +1361,13 @@ const styles = StyleSheet.create({
     opacity: 0.9,
   },
   faderCapGripGroove: {
-    width: 14,
+    width: 13,
     height: 1.5,
     backgroundColor: '#4E505E',
     borderRadius: 0.75,
   },
   faderCapCenterIndexLine: {
-    width: 20,
+    width: 18,
     height: 2.5,
     backgroundColor: '#1E202A',
     borderRadius: 1,
@@ -1112,18 +1378,97 @@ const styles = StyleSheet.create({
     backgroundColor: '#6A6C7A',
     opacity: 0.8,
   },
-  meterColumn: {
-    width: 9,
+  stereoDualMeterCol: {
+    flexDirection: 'row',
+    gap: 2,
     alignItems: 'center',
     justifyContent: 'center',
   },
+  stereoSubMeter: {
+    alignItems: 'center',
+  },
+  microMeterLabel: {
+    color: '#8C8EA6',
+    fontSize: 6.5,
+    fontWeight: '900',
+    marginBottom: 1,
+  },
+  /* Split Mode Faders & Meters */
+  splitFadersArea: {
+    flex: 1,
+    width: '100%',
+    flexDirection: 'row',
+    alignItems: 'stretch',
+    justifyContent: 'space-between',
+    marginVertical: 3,
+    gap: 3,
+  },
+  splitSubTrack: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  splitSubTrackBody: {
+    flex: 1,
+    width: '100%',
+    flexDirection: 'row',
+    alignItems: 'stretch',
+    justifyContent: 'center',
+    gap: 2,
+  },
+  splitFaderContainer: {
+    flex: 1,
+    position: 'relative',
+    alignItems: 'center',
+    justifyContent: 'center',
+    minWidth: 16,
+    cursor: 'pointer' as any,
+  },
+  splitSlotTrack: {
+    width: 4,
+    height: '100%',
+    backgroundColor: '#060609',
+    borderRadius: 2,
+    borderWidth: 1,
+    borderColor: '#1A1C28',
+    position: 'relative',
+  },
+  splitFaderCapMetallic: {
+    position: 'absolute',
+    width: 18,
+    height: 36,
+    backgroundColor: '#A8A8B4',
+    borderRadius: 3,
+    borderWidth: 1.5,
+    borderColor: '#D8D8E2',
+    justifyContent: 'center',
+    alignItems: 'center',
+    // @ts-ignore web shadow
+    boxShadow: '0 4px 10px rgba(0,0,0,0.85), inset 0 1px 1px rgba(255,255,255,0.7)',
+  },
+  splitCapIndexLine: {
+    width: 12,
+    height: 2,
+    backgroundColor: '#1E202A',
+    borderRadius: 1,
+  },
+  splitMeterContainer: {
+    width: 5,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  splitTrackDivider: {
+    width: 1,
+    height: '90%',
+    alignSelf: 'center',
+    backgroundColor: '#26293A',
+  },
   meterTrack: {
-    width: 8,
     flex: 1,
     height: '100%',
     backgroundColor: '#07080D',
     borderRadius: 2,
-    padding: 1,
+    padding: 0.5,
     justifyContent: 'space-between',
     borderWidth: 1,
     borderColor: '#191B26',
@@ -1149,7 +1494,7 @@ const styles = StyleSheet.create({
   },
   dbReadoutText: {
     color: '#00E676',
-    fontSize: 8.5,
+    fontSize: 7.5,
     fontWeight: '900',
     fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
   },
