@@ -16,6 +16,7 @@ import {
 } from '../services/tallySoundService';
 import {
   signalingService,
+  normalizeRoomId,
   ConnectionStatus,
   TallyUpdatePayload,
   MuteRemoteOperatorPayload,
@@ -23,6 +24,7 @@ import {
   UserLeftPayload,
 } from '../services/signalingService';
 import { webrtcAudioService } from '../services/webrtcAudioService';
+import { authService, AuthSession } from '../services/authService';
 
 export type UserRole = 'director' | 'camera';
 export type CameraId = string;
@@ -66,6 +68,11 @@ export interface IntercomContextType {
   startAudioCall: (roomId: string, userId: string) => Promise<boolean>;
   endAudioCall: () => Promise<void>;
   setMicEnabled: (enabled: boolean) => void;
+
+  // 30-Day Email Authentication
+  authSession: AuthSession | null;
+  loginWithEmail: (email: string) => AuthSession;
+  logoutEmail: () => void;
 }
 
 const IntercomContext = createContext<IntercomContextType | undefined>(undefined);
@@ -83,6 +90,7 @@ export const IntercomProvider: React.FC<IntercomProviderProps> = ({ children }) 
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>('disconnected');
   const [isMutedByDirector, setIsMutedByDirector] = useState<boolean>(false);
   const [isProgramOverlap, setIsProgramOverlap] = useState<boolean>(false);
+  const [authSession, setAuthSession] = useState<AuthSession | null>(() => authService.getSession());
 
   const currentUserRef = useRef<Participant | null>(currentUser);
   currentUserRef.current = currentUser;
@@ -281,28 +289,33 @@ export const IntercomProvider: React.FC<IntercomProviderProps> = ({ children }) 
       }
     });
 
-    // Handle remote mute command from Director
-    const unsubMute = signalingService.on<MuteRemoteOperatorPayload>('MUTE_REMOTE_OPERATOR', (payload, message) => {
+    // Handle remote mute command from Director (supports MUTE_REMOTE_OPERATOR and REMOTE_MUTE_TOGGLE)
+    const handleRemoteMuteEvent = (payload: any, message: any) => {
       const isAuthorizedDirector =
         message.senderRole === 'director' ||
-        payload.senderRole === 'director';
+        payload?.senderRole === 'director';
 
       if (!isAuthorizedDirector) {
         console.warn(
-          `[IntercomContext] REJECTED unauthorized MUTE_REMOTE_OPERATOR from ${message.senderName || message.senderId}`
+          `[IntercomContext] REJECTED unauthorized remote mute from ${message.senderName || message.senderId}`
         );
         return;
       }
 
-      const targetId = payload.targetUserId;
-      const targetCam = payload.targetCameraId;
-      const shouldMute = payload.mute;
+      const targetId = payload?.targetUserId || payload?.targetId;
+      const rawCam = payload?.targetCameraId || payload?.targetCamera || payload?.cameraId;
+      const targetCam = rawCam !== undefined && rawCam !== null
+        ? (rawCam.toString().startsWith('cam') ? rawCam.toString() : `cam${rawCam}`)
+        : undefined;
+      const shouldMute = payload?.forceMute !== undefined
+        ? Boolean(payload.forceMute)
+        : (payload?.mute !== undefined ? Boolean(payload.mute) : true);
 
       console.log(
-        `[IntercomContext] Authoritative MUTE_REMOTE_OPERATOR received from Director: target=${targetId || targetCam}, mute=${shouldMute}`
+        `[IntercomContext] Authoritative remote mute event received: target=${targetId || targetCam}, forceMute=${shouldMute}`
       );
 
-      // Update in local roster
+      // Update in local roster immediately
       setParticipantsList((prevList) =>
         prevList.map((p) => {
           if ((targetId && p.id === targetId) || (targetCam && p.cameraId === targetCam)) {
@@ -312,7 +325,7 @@ export const IntercomProvider: React.FC<IntercomProviderProps> = ({ children }) 
         })
       );
 
-      // If targeted to this device
+      // If targeted to this camera device
       const current = currentUserRef.current;
       if (
         current &&
@@ -325,9 +338,14 @@ export const IntercomProvider: React.FC<IntercomProviderProps> = ({ children }) 
           webrtcAudioService.setMicEnabled(false);
         } else {
           setIsMutedByDirector(false);
+          setCurrentUser((prev) => (prev ? { ...prev, isMuted: false } : null));
+          webrtcAudioService.setMicEnabled(true);
         }
       }
-    });
+    };
+
+    const unsubMute = signalingService.on('MUTE_REMOTE_OPERATOR', handleRemoteMuteEvent);
+    const unsubMuteToggle = signalingService.on('REMOTE_MUTE_TOGGLE', handleRemoteMuteEvent);
 
     return () => {
       unsubStatus();
@@ -335,6 +353,7 @@ export const IntercomProvider: React.FC<IntercomProviderProps> = ({ children }) 
       unsubJoined();
       unsubLeft();
       unsubMute();
+      unsubMuteToggle();
     };
   }, []);
 
@@ -364,8 +383,10 @@ export const IntercomProvider: React.FC<IntercomProviderProps> = ({ children }) 
    * Initializes audio session for background playback, connects signaling, and starts mesh WebRTC voice call.
    */
   const joinRoom = useCallback(async (roomId: string, user: Participant, signalingUrl?: string) => {
+    const cleanRoomId = normalizeRoomId(roomId);
+
     // 1. Enter room immediately: synchronously set room & user so screen transitions without delay
-    setCurrentRoomId(roomId);
+    setCurrentRoomId(cleanRoomId);
     setCurrentUser(user);
 
     setParticipantsList((prevList) => {
@@ -383,7 +404,7 @@ export const IntercomProvider: React.FC<IntercomProviderProps> = ({ children }) 
 
     // 3. Connect to real-time pub/sub signaling server & BroadcastChannel
     try {
-      await signalingService.connect(roomId, user, signalingUrl);
+      await signalingService.connect(cleanRoomId, user, signalingUrl);
     } catch (sigErr) {
       console.warn('[IntercomContext] Signaling connection error during join:', sigErr);
     }
@@ -391,8 +412,8 @@ export const IntercomProvider: React.FC<IntercomProviderProps> = ({ children }) 
     // 4. Background WebRTC audio initialization (NEVER blocks screen transition or Tally UI)
     (async () => {
       try {
-        console.log('[IntercomContext] Starting background WebRTC audio initialization...');
-        await webrtcAudioService.startAudioCall(roomId, user.id);
+        console.log(`[IntercomContext] Starting background WebRTC audio initialization for room "${cleanRoomId}"...`);
+        await webrtcAudioService.startAudioCall(cleanRoomId, user.id);
         webrtcAudioService.setMicEnabled(!user.isMuted);
       } catch (audioErr) {
         console.warn('[IntercomContext] WebRTC background start warning:', audioErr);
@@ -431,6 +452,24 @@ export const IntercomProvider: React.FC<IntercomProviderProps> = ({ children }) 
     setConnectionStatus('disconnected');
     setIsMutedByDirector(false);
   }, []);
+
+  /**
+   * Log in user with email for 30-day persistent session.
+   */
+  const loginWithEmail = useCallback((email: string) => {
+    const session = authService.login(email);
+    setAuthSession(session);
+    return session;
+  }, []);
+
+  /**
+   * Clear session from localStorage, leave room, and return to login gate.
+   */
+  const logoutEmail = useCallback(() => {
+    authService.logout();
+    setAuthSession(null);
+    leaveRoom().catch(() => {});
+  }, [leaveRoom]);
 
   /**
    * Sets the active preview camera (only one camera can be in preview at a time).
@@ -515,7 +554,19 @@ export const IntercomProvider: React.FC<IntercomProviderProps> = ({ children }) 
         })
       );
 
-      // Broadcast remote mute command across signaling
+      const num = targetCameraId ? parseInt(targetCameraId.replace(/\D/g, ''), 10) : undefined;
+
+      // Broadcast remote mute command across signaling (REMOTE_MUTE_TOGGLE + MUTE_REMOTE_OPERATOR)
+      signalingService.send('REMOTE_MUTE_TOGGLE', {
+        targetCamera: num !== undefined ? num : targetCameraId,
+        targetCameraId,
+        targetUserId,
+        forceMute: mute,
+        mute,
+        senderRole: 'director',
+        directorId: user.id,
+      });
+
       signalingService.send<MuteRemoteOperatorPayload>('MUTE_REMOTE_OPERATOR', {
         targetUserId,
         targetCameraId,
@@ -579,6 +630,9 @@ export const IntercomProvider: React.FC<IntercomProviderProps> = ({ children }) 
       startAudioCall,
       endAudioCall,
       setMicEnabled,
+      authSession,
+      loginWithEmail,
+      logoutEmail,
     }),
     [
       currentUser,
@@ -599,6 +653,9 @@ export const IntercomProvider: React.FC<IntercomProviderProps> = ({ children }) 
       startAudioCall,
       endAudioCall,
       setMicEnabled,
+      authSession,
+      loginWithEmail,
+      logoutEmail,
     ]
   );
 

@@ -1,6 +1,7 @@
 {
-  "name": "intercon-tally",
-  "version": "1.0.0",
+  "name": "Intercon-Tally-V2-vMix",
+  "description": "Intercon-Tally-V2-vMix: Direct vMix API Integration via USB/Local Network",
+  "version": "2.0.0",
   "main": "server/index.js",
   "dependencies": {
     "@config-plugins/react-native-webrtc": "^15.0.2",
@@ -29,7 +30,7 @@
   },
   "private": true,
   "engines": {
-    "node": ">=20.0.0 <21.0.0"
+    "node": ">=20.0.0"
   },
   "devDependencies": {
     "@types/react": "~19.2.4",

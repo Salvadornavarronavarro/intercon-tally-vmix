@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
   SafeAreaView,
   View,
@@ -20,8 +20,12 @@ import {
 } from './context/IntercomContext';
 import { unlockAudioSession } from './services/tallySoundService';
 import { webrtcAudioService } from './services/webrtcAudioService';
+import { normalizeRoomId } from './services/signalingService';
 import { DirectorView } from './components/DirectorView';
 import { CameraView } from './components/CameraView';
+import { BrandedTopBar } from './components/BrandedTopBar';
+import { CrewAuthModal } from './components/CrewAuthModal';
+import { EmailLoginGate } from './components/EmailLoginGate';
 
 const AVAILABLE_CAMERAS: CameraId[] = [
   'cam1',
@@ -35,14 +39,54 @@ const AVAILABLE_CAMERAS: CameraId[] = [
 ];
 
 const MainScreen: React.FC = () => {
-  const { currentUser, joinRoom } = useIntercom();
+  const {
+    currentUser,
+    joinRoom,
+    authSession,
+    loginWithEmail,
+    logoutEmail,
+  } = useIntercom();
+
+  // 1. Mandatory Email Authentication Gate: Block entire production interface if not authenticated
+  if (!authSession) {
+    return (
+      <EmailLoginGate
+        onLoginSuccess={(session) => {
+          loginWithEmail(session.email);
+        }}
+      />
+    );
+  }
 
   // Setup form states
   const [role, setRole] = useState<UserRole>('director');
   const [selectedCam, setSelectedCam] = useState<CameraId>('cam1');
   const [name, setName] = useState<string>('Director 1');
   const [roomId, setRoomId] = useState<string>('STUDIO-A');
+  const [isAuthModalOpen, setIsAuthModalOpen] = useState<boolean>(false);
   const hasEnteredRef = useRef<boolean>(false);
+  const autoJoinedOnceRef = useRef<boolean>(false);
+
+  // 2. Once authenticated, automatically enter production room as Director
+  useEffect(() => {
+    if (authSession && !currentUser && !autoJoinedOnceRef.current) {
+      autoJoinedOnceRef.current = true;
+      try {
+        unlockAudioSession().catch(() => {});
+        webrtcAudioService.unlockAudioPlayback().catch(() => {});
+      } catch {}
+
+      const userProfile: Participant = {
+        id: `dir-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+        name: 'Director 1',
+        role: 'director',
+        isMuted: false,
+      };
+      joinRoom('STUDIO-A', userProfile).catch((err) => {
+        console.warn('[App] Auto-join Director error:', err);
+      });
+    }
+  }, [authSession, currentUser, joinRoom]);
 
   const handleRoleChange = (newRole: UserRole) => {
     setRole(newRole);
@@ -81,8 +125,10 @@ const MainScreen: React.FC = () => {
       isMuted: false, // Default to UNMUTED (active talkback) upon entering room
     };
 
+    const cleanRoomId = normalizeRoomId(roomId);
+
     // Transition immediately without blocking
-    joinRoom(roomId.trim().toUpperCase(), userProfile).catch((err) => {
+    joinRoom(cleanRoomId, userProfile).catch((err) => {
       console.warn('Failed to join intercom room:', err);
       hasEnteredRef.current = false;
     });
@@ -100,6 +146,13 @@ const MainScreen: React.FC = () => {
   return (
     <SafeAreaView style={styles.safeArea}>
       <StatusBar barStyle="light-content" backgroundColor="#0D0D12" />
+
+      {/* Branded Institutional Top Bar */}
+      <BrandedTopBar
+        onOpenAuthModal={() => setIsAuthModalOpen(true)}
+        currentUser={currentUser}
+        currentRoomId={roomId}
+      />
 
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
@@ -211,10 +264,11 @@ const MainScreen: React.FC = () => {
               <TextInput
                 style={styles.textInput}
                 value={roomId}
-                onChangeText={(val) => setRoomId(val.toUpperCase())}
-                placeholder="e.g. STUDIO-A"
+                onChangeText={setRoomId}
+                placeholder="e.g. STUDIO-A, CONTROL-1, OB-VAN"
                 placeholderTextColor="#666678"
                 autoCapitalize="characters"
+                autoCorrect={false}
               />
             </View>
           </View>
@@ -241,6 +295,12 @@ const MainScreen: React.FC = () => {
           </Text>
         </ScrollView>
       </KeyboardAvoidingView>
+
+      {/* Crew Identification / Auth Modal */}
+      <CrewAuthModal
+        visible={isAuthModalOpen}
+        onClose={() => setIsAuthModalOpen(false)}
+      />
     </SafeAreaView>
   );
 };

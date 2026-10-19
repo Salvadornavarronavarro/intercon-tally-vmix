@@ -1,8 +1,8 @@
 {
   "expo": {
-    "name": "intercon-tally",
-    "slug": "intercon-tally",
-    "version": "1.0.0",
+    "name": "Intercon-Tally-V2-vMix",
+    "slug": "intercon-tally-v2-vmix",
+    "version": "2.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",

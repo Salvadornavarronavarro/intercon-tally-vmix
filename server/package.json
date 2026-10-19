@@ -1,7 +1,7 @@
 {
-  "name": "intercom-tally-signaling-server",
-  "version": "1.0.0",
-  "description": "Zero-cost, lightweight WebRTC and Tally signaling server for Intercom Tali",
+  "name": "intercon-tally-v2-vmix-server",
+  "version": "2.0.0",
+  "description": "vMix Local Bridge & Tally signaling server for Intercon-Tally-V2-vMix",
   "main": "index.js",
   "scripts": {
     "start": "node index.js",

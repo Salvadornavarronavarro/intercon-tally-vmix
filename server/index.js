@@ -14,6 +14,7 @@
 const http = require('http');
 const path = require('path');
 const fs = require('fs');
+const os = require('os');
 const express = require('express');
 const { WebSocketServer, WebSocket } = require('ws');
 
@@ -41,12 +42,39 @@ const DIST_DIR = fs.existsSync(path.resolve(__dirname, '../dist'))
 const rooms = new Map();
 
 /**
+ * Normalizes and sanitizes room names dynamically:
+ * - Trims leading/trailing whitespace
+ * - Converts to uppercase for uniform case-insensitivity
+ * - Replaces any whitespace or underscore sequences with a hyphen
+ * - Allows alphanumeric characters and hyphens
+ * - Deduplicates hyphens and trims leading/trailing hyphens
+ * - Defaults to 'DEFAULT' if empty
+ */
+function normalizeRoomId(rawRoomId) {
+  if (!rawRoomId || typeof rawRoomId !== 'string') {
+    return 'DEFAULT';
+  }
+  const cleaned = rawRoomId
+    .trim()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toUpperCase()
+    .replace(/[\s_]+/g, '-')
+    .replace(/[^A-Z0-9-]/g, '')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '');
+
+  return cleaned || 'DEFAULT';
+}
+
+/**
  * Retrieves an existing room or creates a new isolated room record.
  */
 function getOrCreateRoom(roomId) {
-  if (!rooms.has(roomId)) {
-    rooms.set(roomId, {
-      id: roomId,
+  const cleanId = normalizeRoomId(roomId);
+  if (!rooms.has(cleanId)) {
+    rooms.set(cleanId, {
+      id: cleanId,
       directorId: null,
       tallyState: {
         activePreviewCamera: null,
@@ -55,9 +83,9 @@ function getOrCreateRoom(roomId) {
       participants: new Map(),
       createdAt: Date.now(),
     });
-    console.log(`[RoomManager] Room created: "${roomId}" (Total active rooms: ${rooms.size})`);
+    console.log(`[RoomManager] Room created: "${cleanId}" (Total active rooms: ${rooms.size})`);
   }
-  return rooms.get(roomId);
+  return rooms.get(cleanId);
 }
 
 /**
@@ -65,7 +93,8 @@ function getOrCreateRoom(roomId) {
  * Passes optional socketToCheck to guarantee stale closing sockets do not evict reconnected peers.
  */
 function removeParticipantFromRoom(roomId, userId, socketToCheck = null) {
-  const room = rooms.get(roomId);
+  const cleanId = normalizeRoomId(roomId);
+  const room = rooms.get(cleanId);
   if (!room) return;
 
   const participant = room.participants.get(userId);
@@ -80,19 +109,19 @@ function removeParticipantFromRoom(roomId, userId, socketToCheck = null) {
 
     room.participants.delete(userId);
     console.log(
-      `[RoomManager] User "${participant.user?.name || userId}" left room "${roomId}" (Remaining in room: ${room.participants.size})`
+      `[RoomManager] User "${participant.user?.name || userId}" left room "${cleanId}" (Remaining in room: ${room.participants.size})`
     );
 
     // Reset director if the director disconnected
     if (room.directorId === userId) {
       room.directorId = null;
-      console.log(`[RoomManager] Director disconnected from room "${roomId}". Director seat is now vacant.`);
+      console.log(`[RoomManager] Director disconnected from room "${cleanId}". Director seat is now vacant.`);
     }
 
     // Broadcast USER_LEFT strictly within this room
-    broadcastToRoom(roomId, {
+    broadcastToRoom(cleanId, {
       type: 'USER_LEFT',
-      roomId,
+      roomId: cleanId,
       senderId: userId,
       senderName: participant.user?.name,
       senderRole: participant.user?.role,
@@ -105,8 +134,8 @@ function removeParticipantFromRoom(roomId, userId, socketToCheck = null) {
 
     // Automatic Immediate Purge & Memory Reclamation when last participant leaves
     if (room.participants.size === 0) {
-      rooms.delete(roomId);
-      console.log(`[RoomManager] Room "${roomId}" is now empty. Automatically purged from memory. (Total active rooms: ${rooms.size})`);
+      rooms.delete(cleanId);
+      console.log(`[RoomManager] Room "${cleanId}" is now empty. Automatically purged from memory. (Total active rooms: ${rooms.size})`);
     }
   }
 }
@@ -115,7 +144,8 @@ function removeParticipantFromRoom(roomId, userId, socketToCheck = null) {
  * Strictly broadcasts a message ONLY to participants within the specified roomId.
  */
 function broadcastToRoom(roomId, message, excludeWs = null) {
-  const room = rooms.get(roomId);
+  const cleanId = normalizeRoomId(roomId);
+  const room = rooms.get(cleanId);
   if (!room) return;
 
   const payloadStr = typeof message === 'string' ? message : JSON.stringify(message);
@@ -125,7 +155,7 @@ function broadcastToRoom(roomId, message, excludeWs = null) {
       try {
         participant.ws.send(payloadStr);
       } catch (err) {
-        console.warn(`[Broadcast] Error sending to user ${participant.user?.id} in room ${roomId}:`, err.message);
+        console.warn(`[Broadcast] Error sending to user ${participant.user?.id} in room ${cleanId}:`, err.message);
       }
     }
   }
@@ -136,7 +166,8 @@ function broadcastToRoom(roomId, message, excludeWs = null) {
  * Guarantees zero cross-room delivery.
  */
 function sendToUser(roomId, targetUserId, message) {
-  const room = rooms.get(roomId);
+  const cleanId = normalizeRoomId(roomId);
+  const room = rooms.get(cleanId);
   if (!room) return false;
 
   const participant = room.participants.get(targetUserId);
@@ -156,15 +187,85 @@ function sendToUser(roomId, targetUserId, message) {
 const app = express();
 const server = http.createServer(app);
 
-// CORS headers
+// Body parser middleware
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+
+// CORS headers: allow cross-origin requests from local USB tethering, WiFi, and localhost
 app.use((req, res, next) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS, PUT, DELETE');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, Accept');
   if (req.method === 'OPTIONS') {
     return res.sendStatus(204);
   }
   next();
+});
+
+// Dedicated local API proxy endpoint for vMix (/api/vmix)
+// Accepts GET or POST with host, port, function, input, etc.
+app.all('/api/vmix', async (req, res) => {
+  const params = req.method === 'POST' ? { ...req.query, ...req.body } : req.query;
+
+  const targetHost = (params.host || params.Host || '127.0.0.1').toString().trim();
+  const targetPort = (params.port || params.Port || '8088').toString().trim();
+  const vmixFunction = params.function || params.Function || '';
+  const vmixInput = params.input !== undefined ? params.input : (params.Input !== undefined ? params.Input : '');
+
+  // Build target query string for vMix HTTP API
+  const queryParts = [];
+  if (vmixFunction) {
+    queryParts.push(`Function=${encodeURIComponent(vmixFunction)}`);
+  }
+  if (vmixInput !== '') {
+    queryParts.push(`Input=${encodeURIComponent(vmixInput)}`);
+  }
+
+  // Forward any additional parameters (e.g. Value, Duration, SelectedName)
+  const reservedKeys = new Set(['host', 'Host', 'port', 'Port', 'function', 'Function', 'input', 'Input']);
+  for (const [key, value] of Object.entries(params)) {
+    if (!reservedKeys.has(key) && value !== undefined && value !== null && value !== '') {
+      queryParts.push(`${encodeURIComponent(key)}=${encodeURIComponent(value)}`);
+    }
+  }
+
+  const queryString = queryParts.length > 0 ? `?${queryParts.join('&')}` : '';
+  const targetUrl = `http://${targetHost}:${targetPort}/api/${queryString}`;
+
+  console.log(`[vMixProxy] Forwarding ${req.method} -> ${targetUrl}`);
+
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 2500);
+
+    const vmixRes = await fetch(targetUrl, {
+      method: 'GET',
+      headers: {
+        'Accept': 'text/xml, application/xml, text/plain, */*',
+      },
+      signal: controller.signal,
+    });
+
+    clearTimeout(timeout);
+
+    const bodyText = await vmixRes.text();
+
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Content-Type', vmixRes.headers.get('content-type') || 'text/xml; charset=utf-8');
+    return res.status(vmixRes.status).send(bodyText);
+  } catch (err) {
+    const isTimeout = err.name === 'AbortError';
+    console.warn(`[vMixProxy] Error connecting to vMix at ${targetHost}:${targetPort}: ${err.message}`);
+
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Content-Type', 'application/json');
+    return res.status(isTimeout ? 504 : 502).json({
+      success: false,
+      error: 'VMIX_UNREACHABLE',
+      message: isTimeout ? 'Connection timed out (vMix unreachable)' : err.message,
+      target: `http://${targetHost}:${targetPort}/api/`,
+    });
+  }
 });
 
 // Health check endpoint for Render, Railway, Kubernetes, or monitoring
@@ -178,8 +279,8 @@ app.get(['/health', '/api/health', '/healthz'], (req, res) => {
 
   res.status(200).json({
     status: 'online',
-    service: 'Intercom Tally Signaling & Web Server',
-    version: '1.2.0',
+    service: 'Intercom-Tally-V2-vMix Signaling & Web Server',
+    version: '2.0.0',
     uptimeSeconds: Math.floor(process.uptime()),
     totalActiveRooms: rooms.size,
     totalConnectedClients: totalConnectedClients,
@@ -207,7 +308,7 @@ if (fs.existsSync(distDir)) {
 
   // Catch-all route to serve index.html for Single-Page Routing (SPA)
   app.use((req, res, next) => {
-    if (req.path.startsWith('/health') || req.path.startsWith('/ws')) return next();
+    if (req.path.startsWith('/health') || req.path.startsWith('/ws') || req.path.startsWith('/api')) return next();
     const indexPath = path.join(distDir, 'index.html');
     if (fs.existsSync(indexPath)) {
       return res.sendFile(indexPath);
@@ -237,7 +338,7 @@ const wss = new WebSocketServer({ server });
 wss.on('connection', (ws, req) => {
   const host = req.headers.host || 'localhost';
   const parsedUrl = new URL(req.url, `http://${host}`);
-  const initialRoomId = parsedUrl.searchParams.get('roomId') || 'DEFAULT';
+  const initialRoomId = normalizeRoomId(parsedUrl.searchParams.get('roomId'));
   const initialUserId = parsedUrl.searchParams.get('userId') || `user_${Date.now()}`;
 
   // Session metadata bound strictly to socket
@@ -298,15 +399,16 @@ function handleClientMessage(ws, message) {
   }
 
   // Determine target room:
-  // For USER_JOINED, allow switching/joining room.
+  // For USER_JOINED, allow switching/joining room dynamically.
   // For all other messages, strictly enforce that client can only interact with their own room.
+  const cleanMessageRoomId = roomId ? normalizeRoomId(roomId) : ws.roomId;
   let targetRoomId = ws.roomId;
 
   if (type === 'USER_JOINED') {
     const user = payload?.user;
     if (user?.id) {
       // If client switches room, leave previous room first
-      const requestedRoom = roomId || ws.roomId;
+      const requestedRoom = cleanMessageRoomId || ws.roomId;
       if (ws.roomId && ws.roomId !== requestedRoom) {
         removeParticipantFromRoom(ws.roomId, ws.userId);
       }
@@ -314,10 +416,10 @@ function handleClientMessage(ws, message) {
       targetRoomId = requestedRoom;
     }
   } else {
-    // Cross-room security guard: reject if message attempts to target foreign room
-    if (roomId && roomId !== ws.roomId) {
+    // Cross-room security guard: compare normalized room IDs
+    if (cleanMessageRoomId && cleanMessageRoomId !== ws.roomId) {
       console.warn(
-        `[SECURITY] Cross-room breach attempt blocked: Client "${ws.userId}" in room "${ws.roomId}" attempted to send to foreign room "${roomId}". Rejected.`
+        `[SECURITY] Cross-room breach attempt blocked: Client "${ws.userId}" in room "${ws.roomId}" attempted to send to foreign room "${cleanMessageRoomId}". Rejected.`
       );
       ws.send(
         JSON.stringify({
@@ -481,9 +583,10 @@ function handleClientMessage(ws, message) {
     }
 
     // ----------------------------------------------------
-    // MUTE REMOTE OPERATOR (STRICT ROOM-LOCAL DIRECTOR AUTHORIZATION)
+    // MUTE REMOTE OPERATOR / REMOTE_MUTE_TOGGLE (STRICT ROOM-LOCAL DIRECTOR AUTHORIZATION)
     // ----------------------------------------------------
-    case 'MUTE_REMOTE_OPERATOR': {
+    case 'MUTE_REMOTE_OPERATOR':
+    case 'REMOTE_MUTE_TOGGLE': {
       const isSenderDirector =
         ws.userRole === 'director' ||
         (room.directorId && room.directorId === ws.userId) ||
@@ -492,7 +595,7 @@ function handleClientMessage(ws, message) {
 
       if (!isSenderDirector) {
         console.warn(
-          `[SECURITY] Unauthorized MUTE_REMOTE_OPERATOR attempt from user "${ws.userId}" (role: "${ws.userRole}") in room "${targetRoomId}". BLOCKED.`
+          `[SECURITY] Unauthorized ${message.type} attempt from user "${ws.userId}" (role: "${ws.userRole}") in room "${targetRoomId}". BLOCKED.`
         );
 
         ws.send(
@@ -510,9 +613,14 @@ function handleClientMessage(ws, message) {
         return;
       }
 
-      const targetId = payload?.targetUserId;
-      const targetCam = payload?.targetCameraId;
-      const shouldMute = payload?.mute !== false;
+      const targetId = payload?.targetUserId || payload?.targetId;
+      const rawTargetCam = payload?.targetCameraId || payload?.targetCamera || payload?.cameraId;
+      const targetCam = rawTargetCam !== undefined && rawTargetCam !== null
+        ? (rawTargetCam.toString().startsWith('cam') ? rawTargetCam.toString() : `cam${rawTargetCam}`)
+        : null;
+      const shouldMute = payload?.forceMute !== undefined
+        ? Boolean(payload.forceMute)
+        : (payload?.mute !== undefined ? Boolean(payload.mute) : true);
 
       // Update participant's mute status in room roster
       for (const [, participant] of room.participants) {
@@ -522,12 +630,12 @@ function handleClientMessage(ws, message) {
         ) {
           participant.user.isMuted = shouldMute;
           console.log(
-            `[RemoteMute] Director ${ws.userId} set mute=${shouldMute} for operator ${participant.user?.name} (${participant.user?.id}) in room "${targetRoomId}"`
+            `[RemoteMute] Director ${ws.userId} set mute=${shouldMute} for operator ${participant.user?.name} (${participant.user?.id}, ${participant.user?.cameraId}) in room "${targetRoomId}"`
           );
         }
       }
 
-      // Broadcast MUTE_REMOTE_OPERATOR strictly to all participants in THIS room
+      // Broadcast remote mute command strictly to all participants in THIS room
       broadcastToRoom(targetRoomId, message);
       break;
     }
@@ -613,17 +721,33 @@ process.on('SIGINT', () => {
 
 // 5. Start listening
 server.listen(PORT, HOST, () => {
+  const ifaces = os.networkInterfaces();
+  const localAddrs = [];
+  for (const [name, addrs] of Object.entries(ifaces)) {
+    for (const a of addrs || []) {
+      if (a.family === 'IPv4' && !a.internal) {
+        localAddrs.push({ name, ip: a.address });
+      }
+    }
+  }
+
+  const networkLines = localAddrs.length > 0
+    ? localAddrs.map((a) => `   - [${a.name}] http://${a.ip}:${PORT}/`).join('\n')
+    : `   - (No external IPv4 interface found)`;
+
   console.log(`
-=====================================================
-📡 Intercom Tally Signaling & Web Server Online (v1.2.0)
-=====================================================
+======================================================================
+📡 Intercon-Tally-V2-vMix Signaling & Bridge Server Online (v2.0.0)
+======================================================================
 Port:               ${PORT}
 Host:               ${HOST}
+Local URL:          http://localhost:${PORT}/
+vMix CORS Proxy:    http://localhost:${PORT}/api/vmix?host=127.0.0.1&port=8088
 Health & Metrics:   http://localhost:${PORT}/health
-Static Web UI:      http://localhost:${PORT}/
-WebSocket Endpoint: ws://localhost:${PORT}/
 Static Dir (dist):  ${fs.existsSync(DIST_DIR) ? 'Active (' + DIST_DIR + ')' : 'Not built yet (run npm run build)'}
-Multi-room isolation & auto-purge: ACTIVE
-=====================================================
+
+📱 Network & USB Tethering IPs (for Director iPad / Devices):
+${networkLines}
+======================================================================
   `);
 });

@@ -1,12 +1,12 @@
 services:
   - type: web
-    name: intercon-tally
+    name: intercon-tally-v2-vmix
     runtime: node
     plan: free
     buildCommand: npm install && npm run build
     startCommand: npm start
     healthCheckPath: /health
-    autoDeploy: true
+    autoDeploy: false
     envVars:
       - key: NODE_ENV
         value: production

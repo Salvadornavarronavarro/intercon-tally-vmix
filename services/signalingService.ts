@@ -6,6 +6,7 @@ export type SignalingEventType =
   | 'USER_LEFT'
   | 'TALLY_UPDATE'
   | 'MUTE_REMOTE_OPERATOR'
+  | 'REMOTE_MUTE_TOGGLE'
   | 'AUDIO_OFFER'
   | 'AUDIO_ANSWER'
   | 'ICE_CANDIDATE'
@@ -58,6 +59,16 @@ export interface MuteRemoteOperatorPayload {
   directorId: string;
 }
 
+export interface RemoteMuteTogglePayload {
+  targetCamera?: string | number;
+  targetCameraId?: string;
+  targetUserId?: string;
+  forceMute?: boolean;
+  mute?: boolean;
+  senderRole: 'director';
+  directorId: string;
+}
+
 export interface AudioOfferPayload {
   sdp: any;
   fromUserId: string;
@@ -78,6 +89,33 @@ export interface IceCandidatePayload {
 
 type MessageHandler<T = any> = (payload: T, message: SignalingMessage<T>) => void;
 type ConnectionStatusHandler = (status: ConnectionStatus) => void;
+
+/**
+ * Normalizes and sanitizes room names dynamically:
+ * - Trims surrounding whitespace
+ * - Strips accents/diacritics
+ * - Converts to uppercase for uniform case-insensitivity
+ * - Replaces any whitespace or underscore sequences with a hyphen
+ * - Allows alphanumeric characters and hyphens
+ * - Deduplicates hyphens and trims leading/trailing hyphens
+ * - Defaults to 'DEFAULT' if empty
+ */
+export function normalizeRoomId(rawRoomId: string | null | undefined): string {
+  if (!rawRoomId || typeof rawRoomId !== 'string') {
+    return 'DEFAULT';
+  }
+  const cleaned = rawRoomId
+    .trim()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toUpperCase()
+    .replace(/[\s_]+/g, '-')
+    .replace(/[^A-Z0-9-]/g, '')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '');
+
+  return cleaned || 'DEFAULT';
+}
 
 /**
  * Resolves default signaling WebSocket URL:
@@ -211,7 +249,7 @@ export class SignalingService {
       this.serverUrl = customUrl;
     }
 
-    this.roomId = roomId;
+    this.roomId = normalizeRoomId(roomId);
     this.currentUser = user;
     this.isIntentionallyClosed = false;
     this.clearReconnectTimer();
@@ -237,11 +275,12 @@ export class SignalingService {
     }
 
     try {
-      this.broadcastChannel = new BroadcastChannel('intercom_tally_channel');
+      const channelName = `intercom_tally_${this.roomId || 'DEFAULT'}`;
+      this.broadcastChannel = new BroadcastChannel(channelName);
       this.broadcastChannel.onmessage = (event: MessageEvent) => {
         this.handleIncomingBroadcastMessage(event.data);
       };
-      console.log('[SignalingService] BroadcastChannel "intercom_tally_channel" active for multi-tab sync');
+      console.log(`[SignalingService] BroadcastChannel "${channelName}" active for multi-tab sync`);
 
       // Broadcast join to existing tabs
       if (this.currentUser) {
@@ -407,8 +446,8 @@ export class SignalingService {
       if (!data || typeof data !== 'object') return;
       const message = data as SignalingMessage;
 
-      // Filter by room ID
-      if (this.roomId && message.roomId !== this.roomId) return;
+      // Filter by room ID (defense in depth)
+      if (this.roomId && normalizeRoomId(message.roomId) !== this.roomId) return;
 
       // Ignore our own echo
       if (this.currentUser && message.senderId === this.currentUser.id) return;

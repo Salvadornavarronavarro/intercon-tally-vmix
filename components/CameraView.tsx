@@ -9,6 +9,8 @@ import {
 } from 'react-native';
 import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
 import { useIntercom } from '../context/IntercomContext';
+import { BrandedTopBar } from './BrandedTopBar';
+import { CrewAuthModal } from './CrewAuthModal';
 
 const CAMERA_LABELS: Record<string, string> = {
   cam1: 'CAM 1',
@@ -38,6 +40,7 @@ export const CameraView: React.FC = () => {
 
   // Screen lock persistence toggle for camera rig mounting
   const [isKeepAwake, setIsKeepAwake] = useState<boolean>(true);
+  const [isAuthModalOpen, setIsAuthModalOpen] = useState<boolean>(false);
 
   useEffect(() => {
     if (isKeepAwake) {
@@ -92,6 +95,12 @@ export const CameraView: React.FC = () => {
       <StatusBar
         barStyle="light-content"
         backgroundColor={isProgram ? '#B71C1C' : isPreview ? '#052614' : '#0B0B0E'}
+      />
+
+      <BrandedTopBar
+        onOpenAuthModal={() => setIsAuthModalOpen(true)}
+        currentUser={currentUser}
+        currentRoomId={currentRoomId}
       />
 
       {/* Top Header Bar */}
@@ -256,6 +265,11 @@ export const CameraView: React.FC = () => {
           </View>
         </TouchableOpacity>
       </View>
+
+      <CrewAuthModal
+        visible={isAuthModalOpen}
+        onClose={() => setIsAuthModalOpen(false)}
+      />
     </SafeAreaView>
   );
 };

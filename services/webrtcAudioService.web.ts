@@ -1,5 +1,6 @@
 import {
   signalingService,
+  normalizeRoomId,
   AudioOfferPayload,
   AudioAnswerPayload,
   IceCandidatePayload,
@@ -52,11 +53,22 @@ export class WebRTCAudioService {
   private onPeerDisconnectedCallbacks: Set<PeerDisconnectedCallback> = new Set();
 
   async startAudioCall(roomId: string, userId: string): Promise<boolean> {
+    const cleanRoomId = normalizeRoomId(roomId);
     if (this.isCallActive && this.localStream) {
+      if (this.roomId !== cleanRoomId) {
+        this.roomId = cleanRoomId;
+        this.localUserId = userId;
+        this.peerConnections.forEach((pc) => {
+          try { pc.close(); } catch {}
+        });
+        this.peerConnections.clear();
+        this.iceCandidateQueues.clear();
+        this.bindSignalingListeners();
+      }
       return true;
     }
 
-    this.roomId = roomId;
+    this.roomId = cleanRoomId;
     this.localUserId = userId;
 
     try {

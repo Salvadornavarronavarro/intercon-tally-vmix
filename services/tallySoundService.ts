@@ -12,8 +12,10 @@ export interface TallyVolumeConfig {
 }
 
 const DEFAULT_VOLUMES: TallyVolumeConfig = {
-  previewVolume: 0.5,
-  programVolume: 0.15, // Low-volume by design so it never overpowers incoming intercom voice
+  // Boosted by +1.5 dB (factor 1.1885): 0.5 -> 0.5943
+  previewVolume: 0.5943,
+  // Boosted by +1.5 dB (factor 1.1885): 0.15 -> 0.1783
+  programVolume: 0.1783,
 };
 
 /**
