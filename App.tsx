@@ -47,46 +47,50 @@ const MainScreen: React.FC = () => {
     logoutEmail,
   } = useIntercom();
 
-  // 1. Mandatory Email Authentication Gate: Block entire production interface if not authenticated
-  if (!authSession) {
-    return (
-      <EmailLoginGate
-        onLoginSuccess={(session) => {
-          loginWithEmail(session.email);
-        }}
-      />
-    );
-  }
-
   // Setup form states
   const [role, setRole] = useState<UserRole>('director');
   const [selectedCam, setSelectedCam] = useState<CameraId>('cam1');
   const [name, setName] = useState<string>('Director 1');
-  const [roomId, setRoomId] = useState<string>('STUDIO-A');
+  const [roomId, setRoomId] = useState<string>('');
   const [isAuthModalOpen, setIsAuthModalOpen] = useState<boolean>(false);
   const hasEnteredRef = useRef<boolean>(false);
-  const autoJoinedOnceRef = useRef<boolean>(false);
 
-  // 2. Once authenticated, automatically enter production room as Director
-  useEffect(() => {
-    if (authSession && !currentUser && !autoJoinedOnceRef.current) {
-      autoJoinedOnceRef.current = true;
-      try {
-        unlockAudioSession().catch(() => {});
-        webrtcAudioService.unlockAudioPlayback().catch(() => {});
-      } catch {}
+  // 1. Production Login & Room Gate: Required before entering production
+  if (!currentUser) {
+    return (
+      <EmailLoginGate
+        initialEmail={authSession?.email || ''}
+        onLoginSuccess={async ({ email, roomId: targetRoom, role: chosenRole, selectedCam: chosenCam, name: chosenName }) => {
+          loginWithEmail(email);
 
-      const userProfile: Participant = {
-        id: `dir-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
-        name: 'Director 1',
-        role: 'director',
-        isMuted: false,
-      };
-      joinRoom('STUDIO-A', userProfile).catch((err) => {
-        console.warn('[App] Auto-join Director error:', err);
-      });
-    }
-  }, [authSession, currentUser, joinRoom]);
+          // WebKit / iOS Audio Unlocking
+          try {
+            unlockAudioSession().catch(() => {});
+            webrtcAudioService.unlockAudioPlayback().catch(() => {});
+          } catch {}
+
+          const cleanRoomId = normalizeRoomId(targetRoom);
+          const userProfile: Participant = {
+            id: `user-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+            name: chosenName?.trim() || (chosenRole === 'director' ? 'Director 1' : `Cam ${chosenCam.replace('cam', '')} Operator`),
+            role: chosenRole,
+            cameraId: chosenRole === 'camera' ? chosenCam : undefined,
+            isMuted: false,
+          };
+
+          setRole(chosenRole);
+          setSelectedCam(chosenCam);
+          setRoomId(cleanRoomId);
+
+          try {
+            await joinRoom(cleanRoomId, userProfile);
+          } catch (err) {
+            console.warn('[App] Failed to join room:', err);
+          }
+        }}
+      />
+    );
+  }
 
   const handleRoleChange = (newRole: UserRole) => {
     setRole(newRole);
@@ -260,13 +264,13 @@ const MainScreen: React.FC = () => {
             </View>
 
             <View style={styles.inputGroup}>
-              <Text style={styles.fieldLabel}>PRODUCTION ROOM ID</Text>
+              <Text style={styles.fieldLabel}>PRODUCTION ROOM ID (OBLIGATORIO)</Text>
               <TextInput
                 style={styles.textInput}
                 value={roomId}
                 onChangeText={setRoomId}
-                placeholder="e.g. STUDIO-A, CONTROL-1, OB-VAN"
-                placeholderTextColor="#666678"
+                placeholder="Escribe el nombre de tu grupo o sala (ej: ALICANTE, EVENTO-1)..."
+                placeholderTextColor="#00E676"
                 autoCapitalize="characters"
                 autoCorrect={false}
               />
@@ -275,9 +279,10 @@ const MainScreen: React.FC = () => {
 
           {/* Connect Action Button */}
           <TouchableOpacity
-            style={styles.connectButton}
+            style={[styles.connectButton, !roomId.trim() && { opacity: 0.5 }]}
             onPress={handleJoin}
-            activeOpacity={0.8}
+            activeOpacity={roomId.trim() ? 0.8 : 1}
+            disabled={!roomId.trim()}
             {...(Platform.OS === 'web'
               ? ({
                   onClick: handleJoin,
@@ -286,7 +291,7 @@ const MainScreen: React.FC = () => {
               : {})}
           >
             <Text style={styles.connectButtonText}>
-              ENTER PRODUCTION INTERCOM
+              {!roomId.trim() ? 'INDICA TU SALA O GRUPO' : 'ENTER PRODUCTION INTERCOM'}
             </Text>
           </TouchableOpacity>
 

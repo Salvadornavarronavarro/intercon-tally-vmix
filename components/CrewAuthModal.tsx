@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Modal,
   View,
@@ -7,6 +7,8 @@ import {
   TouchableOpacity,
   StyleSheet,
   Platform,
+  Animated,
+  Easing,
 } from 'react-native';
 import { useIntercom, UserRole, CameraId, Participant } from '../context/IntercomContext';
 import { normalizeRoomId } from '../services/signalingService';
@@ -35,7 +37,31 @@ export const CrewAuthModal: React.FC<CrewAuthModalProps> = ({ visible, onClose }
     (currentUser?.cameraId as CameraId) || 'cam1'
   );
   const [name, setName] = useState<string>(currentUser?.name || 'Director 1');
-  const [roomId, setRoomId] = useState<string>(currentRoomId || 'STUDIO-A');
+  const [roomId, setRoomId] = useState<string>(currentRoomId || '');
+
+  // Smooth blinking / pulsing animation for Room placeholder
+  const pulseAnim = useRef(new Animated.Value(1)).current;
+
+  useEffect(() => {
+    const animation = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulseAnim, {
+          toValue: 0.22,
+          duration: 900,
+          easing: Easing.inOut(Easing.ease),
+          useNativeDriver: Platform.OS !== 'web',
+        }),
+        Animated.timing(pulseAnim, {
+          toValue: 1,
+          duration: 900,
+          easing: Easing.inOut(Easing.ease),
+          useNativeDriver: Platform.OS !== 'web',
+        }),
+      ])
+    );
+    animation.start();
+    return () => animation.stop();
+  }, [pulseAnim]);
 
   // Sync state when modal opens or user changes
   useEffect(() => {
@@ -205,27 +231,60 @@ export const CrewAuthModal: React.FC<CrewAuthModalProps> = ({ visible, onClose }
 
           {/* Room ID Input */}
           <View style={styles.fieldGroup}>
-            <Text style={styles.fieldLabel}>SALA DE PRODUCCIÓN</Text>
-            <TextInput
-              style={styles.textInput}
-              value={roomId}
-              onChangeText={setRoomId}
-              placeholder="e.g. STUDIO-A, CONTROL-1, OB-VAN"
-              placeholderTextColor="#666678"
-              autoCapitalize="characters"
-              autoCorrect={false}
-            />
+            <View style={styles.labelRow}>
+              <Text style={styles.fieldLabel}>SALA DE PRODUCCIÓN</Text>
+              <View style={styles.requiredBadge}>
+                <Text style={styles.requiredBadgeText}>OBLIGATORIO</Text>
+              </View>
+            </View>
+            <View style={styles.roomInputWrapper}>
+              <TextInput
+                style={[styles.textInput, styles.roomTextInput]}
+                value={roomId}
+                onChangeText={setRoomId}
+                placeholder=""
+                placeholderTextColor="transparent"
+                autoCapitalize="characters"
+                autoCorrect={false}
+              />
+              {!roomId && (
+                <Animated.View
+                  style={[styles.blinkingPlaceholderContainer, { opacity: pulseAnim }]}
+                  pointerEvents="none"
+                >
+                  <Text
+                    style={styles.blinkingPlaceholderText}
+                    numberOfLines={1}
+                    // @ts-ignore
+                    className="blinking-room-placeholder"
+                  >
+                    Escribe el nombre de tu grupo o sala (ej: ALICANTE, EVENTO-1)...
+                  </Text>
+                </Animated.View>
+              )}
+            </View>
+            <Text style={styles.roomHelpNote}>
+              ⚠️ Define un nombre único para que tu equipo se comunique en su propio canal privado.
+            </Text>
           </View>
 
           {/* Actions */}
           <View style={styles.actionsGroup}>
             <TouchableOpacity
-              style={styles.submitBtn}
+              style={[
+                styles.submitBtn,
+                !roomId.trim() && styles.submitBtnDisabled,
+              ]}
               onPress={handleSubmit}
-              activeOpacity={0.8}
+              activeOpacity={roomId.trim() ? 0.8 : 1}
+              disabled={!roomId.trim()}
             >
               <Text style={styles.submitBtnText}>
-                {currentUser ? 'ACTUALIZAR IDENTIDAD / ENTRAR' : 'CONECTAR E IDENTIFICAR'}
+                {!roomId.trim()
+                  ? 'INDICA TU SALA O GRUPO'
+                  : currentUser
+                  ? 'ACTUALIZAR IDENTIDAD / ENTRAR'
+                  : 'CONECTAR E IDENTIFICAR'}
               </Text>
             </TouchableOpacity>
 
@@ -395,11 +454,65 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#00E676',
   },
+  submitBtnDisabled: {
+    backgroundColor: '#1A1A24',
+    borderColor: '#282838',
+    opacity: 0.55,
+  },
   submitBtnText: {
     color: '#FFFFFF',
     fontWeight: '900',
     fontSize: 12,
     letterSpacing: 0.5,
+  },
+  labelRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 6,
+  },
+  requiredBadge: {
+    backgroundColor: 'rgba(255, 23, 68, 0.15)',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 23, 68, 0.4)',
+  },
+  requiredBadgeText: {
+    color: '#FF5252',
+    fontSize: 8.5,
+    fontWeight: '900',
+    letterSpacing: 0.6,
+  },
+  roomInputWrapper: {
+    position: 'relative',
+    width: '100%',
+    justifyContent: 'center',
+  },
+  roomTextInput: {
+    color: '#00E676',
+    fontWeight: '800',
+    letterSpacing: 1.2,
+    fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
+  },
+  blinkingPlaceholderContainer: {
+    position: 'absolute',
+    left: 12,
+    right: 12,
+    pointerEvents: 'none',
+  },
+  blinkingPlaceholderText: {
+    color: '#00E676',
+    fontSize: 11.5,
+    fontWeight: '700',
+    letterSpacing: 0.2,
+  },
+  roomHelpNote: {
+    color: '#71718A',
+    fontSize: 10.5,
+    marginTop: 5,
+    lineHeight: 14,
   },
   exitBtn: {
     backgroundColor: '#261214',
