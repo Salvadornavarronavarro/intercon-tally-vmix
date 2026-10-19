@@ -12,6 +12,7 @@ import {
 } from 'react-native';
 import { useIntercom, UserRole, CameraId, Participant } from '../context/IntercomContext';
 import { normalizeRoomId } from '../services/signalingService';
+import { authService } from '../services/authService';
 
 interface CrewAuthModalProps {
   visible: boolean;
@@ -30,7 +31,7 @@ const AVAILABLE_CAMERAS: CameraId[] = [
 ];
 
 export const CrewAuthModal: React.FC<CrewAuthModalProps> = ({ visible, onClose }) => {
-  const { currentUser, currentRoomId, joinRoom, leaveRoom } = useIntercom();
+  const { currentUser, currentRoomId, joinRoom, leaveRoom, authSession } = useIntercom();
 
   const [role, setRole] = useState<UserRole>(currentUser?.role || 'director');
   const [selectedCam, setSelectedCam] = useState<CameraId>(
@@ -108,6 +109,9 @@ export const CrewAuthModal: React.FC<CrewAuthModalProps> = ({ visible, onClose }
     };
 
     try {
+      if (authSession?.email) {
+        authService.triggerGoogleWebhook(authSession.email, cleanRoomId, role).catch(() => {});
+      }
       await joinRoom(cleanRoomId, userProfile);
       onClose();
     } catch (err) {

@@ -223,7 +223,7 @@ export const EmailLoginGate: React.FC<EmailLoginGateProps> = ({
     }
 
     setErrorMessage(null);
-    const session = authService.login(trimmedEmail);
+    const session = authService.login(trimmedEmail, role, trimmedRoom);
     onLoginSuccess({
       session,
       email: trimmedEmail,

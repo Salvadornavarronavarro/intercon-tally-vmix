@@ -357,20 +357,29 @@ function recordSubscriber(entry) {
   }
 }
 
+const GOOGLE_APPS_SCRIPT_WEBHOOK_URL =
+  process.env.GOOGLE_SHEETS_WEBHOOK_URL ||
+  'https://script.google.com/macros/s/AKfycbwDVK2CCI9xgtVNlT0_nHtDs9TRQO19L-6UXNipPIE5o12uh5gaZpqGSlluZxA2HhpgMg/exec';
+
 async function syncToGoogleSheets(entry) {
-  const webhookUrl = process.env.GOOGLE_SHEETS_WEBHOOK_URL;
+  const webhookUrl = GOOGLE_APPS_SCRIPT_WEBHOOK_URL;
   if (!webhookUrl) {
     return;
   }
   try {
-    console.log(`[GoogleSheetsDispatcher] Pushing lead to webhook: ${entry.email}`);
+    const payload = {
+      email: entry.email,
+      room: entry.room || entry.roomId || '',
+      role: entry.role || 'director',
+    };
+    console.log(`[GoogleSheetsDispatcher] Pushing lead to webhook: ${payload.email} (room: ${payload.room}, role: ${payload.role})`);
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 6000);
 
     const res = await fetch(webhookUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(entry),
+      body: JSON.stringify(payload),
       signal: controller.signal,
     });
     clearTimeout(timeout);
@@ -452,6 +461,7 @@ app.get(['/api/rooms/check/:roomName', '/api/rooms/check'], (req, res) => {
 app.post(['/api/subscribers', '/api/auth/register-lead'], async (req, res) => {
   const rawEmail = req.body.email || req.query.email;
   const role = req.body.role || req.query.role || 'director';
+  const room = req.body.room || req.body.roomId || req.query.room || '';
 
   if (!rawEmail || !isValidServerEmail(rawEmail)) {
     return res.status(400).json({
@@ -464,6 +474,7 @@ app.post(['/api/subscribers', '/api/auth/register-lead'], async (req, res) => {
   const cleanEmail = rawEmail.trim().toLowerCase();
   const entry = {
     email: cleanEmail,
+    room: room.trim(),
     role: role.trim(),
     timestamp: req.body.timestamp || new Date().toISOString(),
     ip: (req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').split(',')[0].trim(),
@@ -478,6 +489,7 @@ app.post(['/api/subscribers', '/api/auth/register-lead'], async (req, res) => {
     message: 'Subscriber lead registered successfully.',
     subscriber: {
       email: entry.email,
+      room: entry.room,
       role: entry.role,
       timestamp: entry.timestamp,
     },

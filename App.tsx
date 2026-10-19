@@ -26,6 +26,7 @@ import { CameraView } from './components/CameraView';
 import { BrandedTopBar } from './components/BrandedTopBar';
 import { CrewAuthModal } from './components/CrewAuthModal';
 import { EmailLoginGate } from './components/EmailLoginGate';
+import { authService } from './services/authService';
 
 const AVAILABLE_CAMERAS: CameraId[] = [
   'cam1',
@@ -62,6 +63,9 @@ const MainScreen: React.FC = () => {
         initialEmail={authSession?.email || ''}
         onLoginSuccess={async ({ email, roomId: targetRoom, role: chosenRole, selectedCam: chosenCam, name: chosenName }) => {
           loginWithEmail(email);
+
+          // Asynchronously trigger Google Apps Script registration webhook with mode 'no-cors'
+          authService.triggerGoogleWebhook(email, targetRoom, chosenRole).catch(() => {});
 
           // WebKit / iOS Audio Unlocking
           try {

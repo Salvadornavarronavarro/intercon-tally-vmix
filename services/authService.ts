@@ -8,6 +8,9 @@ const STORAGE_KEY = 'intercon_tally_auth_session';
 export const SESSION_DURATION_DAYS = 30;
 export const THIRTY_DAYS_MS = SESSION_DURATION_DAYS * 24 * 60 * 60 * 1000;
 
+export const GOOGLE_APPS_SCRIPT_WEBHOOK_URL =
+  'https://script.google.com/macros/s/AKfycbwDVK2CCI9xgtVNlT0_nHtDs9TRQO19L-6UXNipPIE5o12uh5gaZpqGSlluZxA2HhpgMg/exec';
+
 // High-risk disposable / temporary / burner email domains
 const DISPOSABLE_EMAIL_DOMAINS = new Set([
   'mailinator.com',
@@ -164,9 +167,48 @@ export const authService = {
   },
 
   /**
+   * Asynchronously dispatches registration payload to Google Apps Script webhook using mode 'no-cors'.
+   * Never blocks or disrupts the user flow.
+   */
+  async triggerGoogleWebhook(email: string, room: string = '', role: string = 'director'): Promise<void> {
+    const cleanEmail = email.trim().toLowerCase();
+    const cleanRoom = room.trim();
+    const cleanRole = role.trim();
+
+    if (!cleanEmail) return;
+
+    const payload = {
+      email: cleanEmail,
+      room: cleanRoom,
+      role: cleanRole,
+    };
+
+    try {
+      console.log('[GoogleAppsScriptWebhook] Dispatching registration payload:', payload);
+      // HTTP POST with mode 'no-cors' allows Google Apps Script redirects without CORS errors
+      fetch(GOOGLE_APPS_SCRIPT_WEBHOOK_URL, {
+        method: 'POST',
+        mode: 'no-cors',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload),
+      }).catch((err) => {
+        console.warn('[GoogleAppsScriptWebhook] Non-blocking dispatch notice:', err);
+      });
+    } catch (err) {
+      console.warn('[GoogleAppsScriptWebhook] Non-blocking error:', err);
+    }
+  },
+
+  /**
    * Asynchronously dispatches verified subscriber lead to server backend and Google Sheets pipeline.
    */
-  async registerSubscriberLead(email: string, role: string = 'director'): Promise<boolean> {
+  async registerSubscriberLead(
+    email: string,
+    role: string = 'director',
+    room: string = ''
+  ): Promise<boolean> {
     const cleanEmail = email.trim().toLowerCase();
     try {
       const baseUrl = getApiBaseUrl();
@@ -179,6 +221,7 @@ export const authService = {
         body: JSON.stringify({
           email: cleanEmail,
           role,
+          room: room.trim(),
           timestamp: new Date().toISOString(),
         }),
       });
@@ -196,7 +239,7 @@ export const authService = {
   /**
    * Stores an authenticated session valid for 30 days and triggers background lead registration.
    */
-  login(email: string, role: string = 'director'): AuthSession {
+  login(email: string, role: string = 'director', room: string = ''): AuthSession {
     const cleanEmail = email.trim().toLowerCase();
     const session: AuthSession = {
       email: cleanEmail,
@@ -211,8 +254,11 @@ export const authService = {
       }
     }
 
-    // Asynchronously log lead into server persistence & Google Sheets without blocking UI
-    this.registerSubscriberLead(cleanEmail, role).catch(() => {});
+    // 1. Immediately trigger the Google Apps Script webhook directly with mode 'no-cors'
+    this.triggerGoogleWebhook(cleanEmail, room, role).catch(() => {});
+
+    // 2. Asynchronously log lead into server persistence & server-side Google Sheets dispatcher
+    this.registerSubscriberLead(cleanEmail, role, room).catch(() => {});
 
     return session;
   },
