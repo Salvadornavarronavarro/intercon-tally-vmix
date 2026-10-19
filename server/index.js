@@ -368,18 +368,25 @@ async function syncToGoogleSheets(entry) {
   }
   try {
     const payload = {
-      email: entry.email,
-      room: entry.room || entry.roomId || '',
-      role: entry.role || 'director',
+      email: (entry.email || '').trim().toLowerCase(),
+      room: (entry.room || entry.roomId || '').trim(),
+      role: (entry.role || 'director').trim(),
     };
-    console.log(`[GoogleSheetsDispatcher] Pushing lead to webhook: ${payload.email} (room: ${payload.room}, role: ${payload.role})`);
+    if (!payload.email) return;
+
+    console.log(`[GoogleSheetsDispatcher] Server-to-server POST to webhook: ${payload.email} (room: ${payload.room}, role: ${payload.role})`);
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 6000);
+    const timeout = setTimeout(() => controller.abort(), 10000);
 
     const res = await fetch(webhookUrl, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'text/plain;charset=utf-8',
+        'Accept': '*/*',
+        'User-Agent': 'Intercon-Tally-Server/2.0',
+      },
       body: JSON.stringify(payload),
+      redirect: 'follow',
       signal: controller.signal,
     });
     clearTimeout(timeout);
@@ -715,6 +722,15 @@ function handleClientMessage(ws, message) {
       });
 
       console.log(`[RoomManager] User joined "${targetRoomId}": ${user.name} [${user.role}] (Total in room: ${room.participants.size})`);
+
+      // Dispatch to Google Apps Script webhook whenever a user connects/joins
+      if (user.email) {
+        syncToGoogleSheets({
+          email: user.email,
+          room: targetRoomId,
+          role: user.role,
+        }).catch(() => {});
+      }
 
       // 1. Send existing room snapshot to newly joined user (THIS room only)
       const existingUsers = [];

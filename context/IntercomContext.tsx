@@ -36,6 +36,7 @@ export interface Participant {
   role: UserRole;
   cameraId?: CameraId;
   isMuted: boolean;
+  email?: string;
 }
 
 export interface IntercomContextType {

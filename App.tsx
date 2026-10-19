@@ -80,6 +80,7 @@ const MainScreen: React.FC = () => {
             role: chosenRole,
             cameraId: chosenRole === 'camera' ? chosenCam : undefined,
             isMuted: false,
+            email: email.trim().toLowerCase(),
           };
 
           setRole(chosenRole);

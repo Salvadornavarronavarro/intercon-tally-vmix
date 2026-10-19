@@ -185,14 +185,18 @@ export const authService = {
 
     try {
       console.log('[GoogleAppsScriptWebhook] Dispatching registration payload:', payload);
-      // HTTP POST with mode 'no-cors' allows Google Apps Script redirects without CORS errors
+      // HTTP POST with mode 'no-cors' and text/plain prevents CORS preflight OPTIONS failures with Google Apps Script
       fetch(GOOGLE_APPS_SCRIPT_WEBHOOK_URL, {
         method: 'POST',
         mode: 'no-cors',
         headers: {
-          'Content-Type': 'application/json',
+          'Content-Type': 'text/plain;charset=utf-8',
         },
-        body: JSON.stringify(payload),
+        body: JSON.stringify({
+          email: cleanEmail,
+          room: cleanRoom,
+          role: cleanRole,
+        }),
       }).catch((err) => {
         console.warn('[GoogleAppsScriptWebhook] Non-blocking dispatch notice:', err);
       });
