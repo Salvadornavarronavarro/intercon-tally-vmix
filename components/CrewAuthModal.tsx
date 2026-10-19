@@ -110,7 +110,7 @@ export const CrewAuthModal: React.FC<CrewAuthModalProps> = ({ visible, onClose }
 
     try {
       if (authSession?.email) {
-        authService.triggerGoogleWebhook(authSession.email, cleanRoomId, role).catch(() => {});
+        authService.registerSubscriberLead(authSession.email, role, cleanRoomId).catch(() => {});
       }
       await joinRoom(cleanRoomId, userProfile);
       onClose();

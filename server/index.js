@@ -361,19 +361,43 @@ const GOOGLE_APPS_SCRIPT_WEBHOOK_URL =
   process.env.GOOGLE_SHEETS_WEBHOOK_URL ||
   'https://script.google.com/macros/s/AKfycbwDVK2CCI9xgtVNlT0_nHtDs9TRQO19L-6UXNipPIE5o12uh5gaZpqGSlluZxA2HhpgMg/exec';
 
+const recentWebhookDispatches = new Map();
+
 async function syncToGoogleSheets(entry) {
   const webhookUrl = GOOGLE_APPS_SCRIPT_WEBHOOK_URL;
   if (!webhookUrl) {
     return;
   }
+
+  const email = (entry.email || '').trim().toLowerCase();
+  const room = (entry.room || entry.roomId || '').trim();
+  const role = (entry.role || 'director').trim();
+
+  if (!email) return;
+
+  // Deduplicate rapid repeat calls within 15 seconds (prevents duplicate submissions)
+  const dedupKey = `${email}:${room}:${role}`;
+  const now = Date.now();
+  const lastSent = recentWebhookDispatches.get(dedupKey);
+  if (lastSent && now - lastSent < 15000) {
+    console.log(`[GoogleSheetsDispatcher] Suppressing duplicate webhook dispatch for ${dedupKey} (sent ${now - lastSent}ms ago)`);
+    return;
+  }
+  recentWebhookDispatches.set(dedupKey, now);
+
+  // Periodic pruning of old deduplication entries
+  if (recentWebhookDispatches.size > 500) {
+    for (const [k, time] of recentWebhookDispatches.entries()) {
+      if (now - time > 60000) recentWebhookDispatches.delete(k);
+    }
+  }
+
   try {
     const payload = {
-      email: (entry.email || '').trim().toLowerCase(),
-      room: (entry.room || entry.roomId || '').trim(),
-      role: (entry.role || 'director').trim(),
+      email,
+      room,
+      role,
     };
-    if (!payload.email) return;
-
     console.log(`[GoogleSheetsDispatcher] Server-to-server POST to webhook: ${payload.email} (room: ${payload.room}, role: ${payload.role})`);
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 10000);
@@ -392,7 +416,7 @@ async function syncToGoogleSheets(entry) {
     clearTimeout(timeout);
     console.log(`[GoogleSheetsDispatcher] Webhook response status: ${res.status}`);
   } catch (err) {
-    console.warn(`[GoogleSheetsDispatcher] Non-blocking webhook dispatch notice for ${entry.email}:`, err.message);
+    console.warn(`[GoogleSheetsDispatcher] Non-blocking webhook dispatch notice for ${email}:`, err.message);
   }
 }
 
