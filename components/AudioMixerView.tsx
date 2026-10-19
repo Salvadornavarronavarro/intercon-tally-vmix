@@ -131,7 +131,10 @@ export const AudioMixerView: React.FC<AudioMixerViewProps> = ({
   }, [cameraCount, cameraMuteMap]);
 
   // Master Section State
+  const [masterMode, setMasterMode] = useState<'stereo' | 'split'>('stereo');
   const [masterVolume, setMasterVolume] = useState<number>(0.75); // 0 dB unity
+  const [masterVolumeL, setMasterVolumeL] = useState<number>(0.75); // Split Master Ch L
+  const [masterVolumeR, setMasterVolumeR] = useState<number>(0.75); // Split Master Ch R
   const [masterMuted, setMasterMuted] = useState<boolean>(false);
   const [masterMeterL, setMasterMeterL] = useState<number>(0.2);
   const [masterMeterR, setMasterMeterR] = useState<number>(0.2);
@@ -222,10 +225,19 @@ export const AudioMixerView: React.FC<AudioMixerViewProps> = ({
           setMasterPeakL((p) => Math.max(0, p * 0.8));
           setMasterPeakR((p) => Math.max(0, p * 0.8));
         } else {
-          const avgLevel = (activeSum / Math.max(1, count)) * masterVolume;
           const panVariance = (Math.random() - 0.5) * 0.06;
-          const targetL = Math.max(0.04, Math.min(1.0, avgLevel + panVariance));
-          const targetR = Math.max(0.04, Math.min(1.0, avgLevel - panVariance));
+          let targetL = 0;
+          let targetR = 0;
+
+          if (masterMode === 'split') {
+            const avgBase = activeSum / Math.max(1, count);
+            targetL = Math.max(0.04, Math.min(1.0, (avgBase + panVariance) * masterVolumeL));
+            targetR = Math.max(0.04, Math.min(1.0, (avgBase - panVariance) * masterVolumeR));
+          } else {
+            const avgLevel = (activeSum / Math.max(1, count)) * masterVolume;
+            targetL = Math.max(0.04, Math.min(1.0, avgLevel + panVariance));
+            targetR = Math.max(0.04, Math.min(1.0, avgLevel - panVariance));
+          }
 
           setMasterMeterL(targetL);
           setMasterMeterR(targetR);
@@ -238,7 +250,7 @@ export const AudioMixerView: React.FC<AudioMixerViewProps> = ({
     }, 75);
 
     return () => clearInterval(timer);
-  }, [activeProgramCamera, activePreviewCamera, masterMuted, masterVolume]);
+  }, [activeProgramCamera, activePreviewCamera, masterMuted, masterVolume, masterMode, masterVolumeL, masterVolumeR]);
 
   // Channel Actions
   const handleToggleMute = (camId: string) => {
@@ -304,8 +316,29 @@ export const AudioMixerView: React.FC<AudioMixerViewProps> = ({
     setMasterMuted((prev) => !prev);
   };
 
+  const handleToggleMasterMode = useCallback(() => {
+    setMasterMode((prev) => {
+      const next = prev === 'stereo' ? 'split' : 'stereo';
+      if (next === 'split') {
+        setMasterVolumeL(masterVolume);
+        setMasterVolumeR(masterVolume);
+      } else {
+        setMasterVolume((masterVolumeL + masterVolumeR) / 2);
+      }
+      return next;
+    });
+  }, [masterVolume, masterVolumeL, masterVolumeR]);
+
   const handleSetMasterVolume = useCallback((newVol: number) => {
     setMasterVolume(Math.max(0, Math.min(1, newVol)));
+  }, []);
+
+  const handleSetMasterVolumeL = useCallback((newVol: number) => {
+    setMasterVolumeL(Math.max(0, Math.min(1, newVol)));
+  }, []);
+
+  const handleSetMasterVolumeR = useCallback((newVol: number) => {
+    setMasterVolumeR(Math.max(0, Math.min(1, newVol)));
   }, []);
 
   const handleAllMute = () => {
@@ -335,6 +368,10 @@ export const AudioMixerView: React.FC<AudioMixerViewProps> = ({
 
         if (!targetId || targetId === 'master') {
           handleSetMasterVolume(ratio);
+        } else if (targetId === 'master_L') {
+          handleSetMasterVolumeL(ratio);
+        } else if (targetId === 'master_R') {
+          handleSetMasterVolumeR(ratio);
         } else if (targetId.endsWith('_A')) {
           const camId = targetId.replace('_A', '');
           handleSetVolumeA(camId, ratio);
@@ -822,84 +859,215 @@ export const AudioMixerView: React.FC<AudioMixerViewProps> = ({
               <Text style={styles.masterHeaderText}>MASTER</Text>
             </View>
             <View style={styles.masterSubRow}>
-              <Text style={styles.masterSubText}>MAIN STEREO DUAL OUT</Text>
+              <Text style={styles.masterSubText}>
+                {masterMode === 'split' ? 'SPLIT DUAL MONO' : 'MAIN STEREO OUT'}
+              </Text>
+              <TouchableOpacity
+                style={[
+                  styles.modeToggleButton,
+                  masterMode === 'split' ? styles.modeToggleSplit : styles.modeToggleStereo,
+                ]}
+                onPress={handleToggleMasterMode}
+                activeOpacity={0.8}
+                accessibilityLabel="Toggle master stereo or mono split mode"
+              >
+                <Text
+                  style={[
+                    styles.modeToggleText,
+                    masterMode === 'split' ? styles.modeTextSplit : styles.modeTextStereo,
+                  ]}
+                >
+                  {masterMode === 'split' ? 'MONO' : 'STEREO'}
+                </Text>
+              </TouchableOpacity>
             </View>
           </View>
 
           {/* Master Fader (Left) & Dual VU Meters (Right) Area */}
           <View style={styles.masterMixArea}>
-            {/* LEFT SIDE: Detailed dB Scale + Master Stereo Fader */}
-            <View style={styles.masterLeftFaderGroup}>
-              {/* Detailed dB Scale */}
-              <View style={styles.masterDbScaleColumn}>
-                {DB_GRADUATION_MARKS.map((m) => (
-                  <View key={m.label} style={styles.dbMarkRow}>
-                    <Text
-                      style={[
-                        styles.masterDbText,
-                        { color: m.color },
-                        m.isUnity && styles.dbLabelUnity,
-                      ]}
-                    >
-                      {m.label}
-                    </Text>
+            {masterMode === 'stereo' ? (
+              /* STEREO MODE: Unified stereo fader on left */
+              <View style={styles.masterLeftFaderGroup}>
+                {/* Detailed dB Scale */}
+                <View style={styles.masterDbScaleColumn}>
+                  {DB_GRADUATION_MARKS.map((m) => (
+                    <View key={m.label} style={styles.dbMarkRow}>
+                      <Text
+                        style={[
+                          styles.masterDbText,
+                          { color: m.color },
+                          m.isUnity && styles.dbLabelUnity,
+                        ]}
+                      >
+                        {m.label}
+                      </Text>
+                      <View
+                        style={[
+                          styles.dbTickMark,
+                          { backgroundColor: m.color },
+                          m.isUnity && styles.dbTickUnity,
+                        ]}
+                      />
+                    </View>
+                  ))}
+                </View>
+
+                {/* Dual Stereo Faders (Ganged Together) */}
+                <View
+                  style={styles.masterDualFadersColumn}
+                  // @ts-ignore: React Native Web pointer event
+                  onPointerDown={(e: any) => {
+                    draggingTargetRef.current = { type: 'fader', id: 'master' };
+                    updateFaderFromPointer(e, 'master');
+                  }}
+                  // @ts-ignore: React Native Web pointer event
+                  onPointerMove={(e: any) => {
+                    if (draggingTargetRef.current?.type === 'fader' && draggingTargetRef.current.id === 'master') {
+                      updateFaderFromPointer(e, 'master');
+                    }
+                  }}
+                  // @ts-ignore: React Native Web pointer event
+                  onPointerUp={() => {
+                    draggingTargetRef.current = null;
+                  }}
+                >
+                  <View style={styles.faderTrackContainer}>
+                    {/* Dual Track Slots for L & R */}
+                    <View style={styles.masterDualTrackSlot}>
+                      <View style={styles.faderSlotTrack}>
+                        <View style={styles.faderUnityNotch} />
+                      </View>
+                      <View style={styles.faderSlotTrack}>
+                        <View style={styles.faderUnityNotch} />
+                      </View>
+                    </View>
+
+                    {/* Ganged Stereo Brushed Fader Handle with Dual Red Bridge */}
                     <View
                       style={[
-                        styles.dbTickMark,
-                        { backgroundColor: m.color },
-                        m.isUnity && styles.dbTickUnity,
+                        styles.masterFaderCapGanged,
+                        {
+                          bottom: `${masterVolume * 84}%`,
+                        },
                       ]}
-                    />
-                  </View>
-                ))}
-              </View>
-
-              {/* Dual Stereo Faders (Ganged Together) */}
-              <View
-                style={styles.masterDualFadersColumn}
-                // @ts-ignore: React Native Web pointer event
-                onPointerDown={(e: any) => {
-                  draggingTargetRef.current = { type: 'fader', id: 'master' };
-                  updateFaderFromPointer(e);
-                }}
-                // @ts-ignore: React Native Web pointer event
-                onPointerMove={(e: any) => {
-                  if (draggingTargetRef.current?.type === 'fader' && draggingTargetRef.current.id === 'master') {
-                    updateFaderFromPointer(e);
-                  }
-                }}
-                // @ts-ignore: React Native Web pointer event
-                onPointerUp={() => {
-                  draggingTargetRef.current = null;
-                }}
-              >
-                <View style={styles.faderTrackContainer}>
-                  {/* Dual Track Slots for L & R */}
-                  <View style={styles.masterDualTrackSlot}>
-                    <View style={styles.faderSlotTrack}>
-                      <View style={styles.faderUnityNotch} />
+                    >
+                      <View style={styles.masterCapBridgeLine} />
+                      <Text style={styles.masterCapText}>STEREO</Text>
+                      <View style={styles.masterCapBridgeLine} />
                     </View>
-                    <View style={styles.faderSlotTrack}>
-                      <View style={styles.faderUnityNotch} />
-                    </View>
-                  </View>
-
-                  {/* Ganged Stereo Brushed Fader Handle with Dual Red Bridge */}
-                  <View
-                    style={[
-                      styles.masterFaderCapGanged,
-                      {
-                        bottom: `${masterVolume * 84}%`,
-                      },
-                    ]}
-                  >
-                    <View style={styles.masterCapBridgeLine} />
-                    <Text style={styles.masterCapText}>STEREO</Text>
-                    <View style={styles.masterCapBridgeLine} />
                   </View>
                 </View>
               </View>
-            </View>
+            ) : (
+              /* MONO / SPLIT MODE: Two discrete faders (L & R) side by side on left */
+              <View style={styles.masterLeftFaderGroup}>
+                {/* Detailed dB Scale */}
+                <View style={styles.masterDbScaleColumn}>
+                  {DB_GRADUATION_MARKS.map((m) => (
+                    <View key={m.label} style={styles.dbMarkRow}>
+                      <Text
+                        style={[
+                          styles.masterDbText,
+                          { color: m.color },
+                          m.isUnity && styles.dbLabelUnity,
+                        ]}
+                      >
+                        {m.label}
+                      </Text>
+                      <View
+                        style={[
+                          styles.dbTickMark,
+                          { backgroundColor: m.color },
+                          m.isUnity && styles.dbTickUnity,
+                        ]}
+                      />
+                    </View>
+                  ))}
+                </View>
+
+                {/* Split Dual Faders Column */}
+                <View style={styles.masterSplitFadersColumn}>
+                  {/* FADER L */}
+                  <View style={styles.masterSplitTrackWrapper}>
+                    <Text style={styles.masterSplitTrackLabel}>L</Text>
+                    <View
+                      style={styles.masterSplitTrackContainer}
+                      // @ts-ignore: React Native Web pointer event
+                      onPointerDown={(e: any) => {
+                        draggingTargetRef.current = { type: 'fader', id: 'master_L' };
+                        updateFaderFromPointer(e, 'master_L');
+                      }}
+                      // @ts-ignore: React Native Web pointer event
+                      onPointerMove={(e: any) => {
+                        if (draggingTargetRef.current?.type === 'fader' && draggingTargetRef.current.id === 'master_L') {
+                          updateFaderFromPointer(e, 'master_L');
+                        }
+                      }}
+                      // @ts-ignore: React Native Web pointer event
+                      onPointerUp={() => {
+                        draggingTargetRef.current = null;
+                      }}
+                    >
+                      <View style={styles.faderSlotTrack}>
+                        <View style={styles.faderUnityNotch} />
+                      </View>
+                      <View
+                        style={[
+                          styles.masterSplitFaderCap,
+                          {
+                            bottom: `${masterVolumeL * 84}%`,
+                          },
+                        ]}
+                      >
+                        <View style={styles.masterSplitCapIndexLine} />
+                        <Text style={styles.masterSplitCapText}>L</Text>
+                      </View>
+                    </View>
+                  </View>
+
+                  {/* Divider */}
+                  <View style={styles.masterSplitDivider} />
+
+                  {/* FADER R */}
+                  <View style={styles.masterSplitTrackWrapper}>
+                    <Text style={styles.masterSplitTrackLabel}>R</Text>
+                    <View
+                      style={styles.masterSplitTrackContainer}
+                      // @ts-ignore: React Native Web pointer event
+                      onPointerDown={(e: any) => {
+                        draggingTargetRef.current = { type: 'fader', id: 'master_R' };
+                        updateFaderFromPointer(e, 'master_R');
+                      }}
+                      // @ts-ignore: React Native Web pointer event
+                      onPointerMove={(e: any) => {
+                        if (draggingTargetRef.current?.type === 'fader' && draggingTargetRef.current.id === 'master_R') {
+                          updateFaderFromPointer(e, 'master_R');
+                        }
+                      }}
+                      // @ts-ignore: React Native Web pointer event
+                      onPointerUp={() => {
+                        draggingTargetRef.current = null;
+                      }}
+                    >
+                      <View style={styles.faderSlotTrack}>
+                        <View style={styles.faderUnityNotch} />
+                      </View>
+                      <View
+                        style={[
+                          styles.masterSplitFaderCap,
+                          {
+                            bottom: `${masterVolumeR * 84}%`,
+                          },
+                        ]}
+                      >
+                        <View style={styles.masterSplitCapIndexLine} />
+                        <Text style={styles.masterSplitCapText}>R</Text>
+                      </View>
+                    </View>
+                  </View>
+                </View>
+              </View>
+            )}
 
             {/* RIGHT SIDE: Dual Stereo VU Meters (L and R LED Ladders) */}
             <View style={styles.masterRightMetersGroup}>
@@ -920,7 +1088,9 @@ export const AudioMixerView: React.FC<AudioMixerViewProps> = ({
           {/* Master Level Readout */}
           <View style={styles.masterDbReadout}>
             <Text style={styles.masterDbReadoutText}>
-              {volumeToDbString(masterVolume)}
+              {masterMode === 'split'
+                ? `L: ${volumeToDbString(masterVolumeL)} | R: ${volumeToDbString(masterVolumeR)}`
+                : volumeToDbString(masterVolume)}
             </Text>
           </View>
 
@@ -1591,7 +1761,7 @@ const styles = StyleSheet.create({
   /* MASTER SECTION (Red Accent Border)                                  */
   /* ================================================================== */
   masterContainer: {
-    width: 180,
+    width: 185,
     backgroundColor: '#120D12',
     borderRadius: 7,
     borderWidth: 2,
@@ -1623,7 +1793,12 @@ const styles = StyleSheet.create({
     letterSpacing: 1.2,
   },
   masterSubRow: {
-    marginTop: 2,
+    width: '100%',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 2,
+    marginTop: 3,
   },
   masterSubText: {
     color: '#FF5252',
@@ -1713,6 +1888,65 @@ const styles = StyleSheet.create({
     fontSize: 7.5,
     fontWeight: '900',
     letterSpacing: 0.6,
+  },
+  masterSplitFadersColumn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'stretch',
+    justifyContent: 'space-around',
+    gap: 4,
+    height: '100%',
+  },
+  masterSplitTrackWrapper: {
+    flex: 1,
+    alignItems: 'center',
+    height: '100%',
+    justifyContent: 'space-between',
+  },
+  masterSplitTrackLabel: {
+    color: '#FF8A80',
+    fontSize: 8,
+    fontWeight: '900',
+    marginBottom: 2,
+  },
+  masterSplitTrackContainer: {
+    flex: 1,
+    position: 'relative',
+    width: '100%',
+    alignItems: 'center',
+    justifyContent: 'center',
+    cursor: 'pointer' as any,
+  },
+  masterSplitFaderCap: {
+    position: 'absolute',
+    width: 22,
+    height: 38,
+    backgroundColor: '#C5112E',
+    borderRadius: 3.5,
+    borderWidth: 1.5,
+    borderColor: '#FF5252',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 2,
+    // @ts-ignore web shadow
+    boxShadow: '0 4px 10px rgba(255, 23, 68, 0.6), inset 0 1px 1px rgba(255,255,255,0.6)',
+  },
+  masterSplitCapIndexLine: {
+    width: 13,
+    height: 2,
+    backgroundColor: '#FFFFFF',
+    marginBottom: 2,
+  },
+  masterSplitCapText: {
+    color: '#FFFFFF',
+    fontSize: 7,
+    fontWeight: '900',
+  },
+  masterSplitDivider: {
+    width: 1,
+    height: '88%',
+    backgroundColor: '#2C1822',
+    alignSelf: 'center',
   },
   masterDbReadout: {
     width: '100%',
