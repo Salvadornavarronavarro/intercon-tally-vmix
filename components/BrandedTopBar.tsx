@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -6,9 +6,12 @@ import {
   StyleSheet,
   Platform,
   Linking,
+  Image,
 } from 'react-native';
 import { useIntercom } from '../context/IntercomContext';
 import { AuthSession } from '../services/authService';
+
+const clapperboardLogo = require('../assets/alicante-paradise-clapperboard.png');
 
 interface BrandedTopBarProps {
   onOpenAuthModal?: () => void;
@@ -115,6 +118,12 @@ export const BrandedTopBar: React.FC<BrandedTopBarProps> = ({
   const [isLogoutHovered, setIsLogoutHovered] = useState(false);
   const [isLoginHovered, setIsLoginHovered] = useState(false);
 
+  useEffect(() => {
+    if (typeof document !== 'undefined') {
+      document.title = 'V-Controller';
+    }
+  }, []);
+
   return (
     <View style={styles.topBarContainer}>
       {/* 1. Left Section: Social & Contact Links */}
@@ -160,10 +169,30 @@ export const BrandedTopBar: React.FC<BrandedTopBarProps> = ({
         </SocialLink>
       </View>
 
-      {/* 2. Center Section: Clean & Uncluttered */}
-      <View style={styles.centerSection} />
+      {/* 2. Center Section: Application Branding ("V-CONTROLLER") */}
+      <View style={styles.centerSection}>
+        <View style={styles.brandTitleContainer}>
+          <Text style={styles.brandTitleText}>V-CONTROLLER</Text>
+          <svg
+            viewBox="0 0 140 8"
+            width="140"
+            height="8"
+            style={{ display: 'block', marginTop: 3 }}
+          >
+            {/* Thin horizontal base line */}
+            <line x1="0" y1="1" x2="140" y2="1" stroke="#2B2D3C" strokeWidth="1" />
+            {/* Three wide slanted parallelogram blocks in RGB order */}
+            {/* 1) Red (#E53935) */}
+            <polygon points="31,2 55,2 51,7 27,7" fill="#E53935" />
+            {/* 2) Green (#43A047) */}
+            <polygon points="58,2 82,2 78,7 54,7" fill="#43A047" />
+            {/* 3) Blue (#1E88E5) */}
+            <polygon points="85,2 109,2 105,7 81,7" fill="#1E88E5" />
+          </svg>
+        </View>
+      </View>
 
-      {/* 3. Right Section: Authenticated Email Badge + Logout */}
+      {/* 3. Right Section: Authenticated Email Badge + Role + Logout + Clapperboard Logo */}
       <View style={styles.rightSection}>
         {authSession ? (
           <>
@@ -276,6 +305,19 @@ export const BrandedTopBar: React.FC<BrandedTopBarProps> = ({
             <Text style={styles.loginButtonText}>Iniciar Sesión</Text>
           </TouchableOpacity>
         )}
+
+        {/* 4. Far Right: "Alicante Paradise Studio" Clapperboard Logo */}
+        <View
+          style={styles.clapperboardContainer}
+          {...(Platform.OS === 'web' ? ({ title: 'Alicante Paradise Studio' } as any) : {})}
+        >
+          <Image
+            source={clapperboardLogo}
+            style={styles.clapperboardImage}
+            resizeMode="contain"
+            accessibilityLabel="Alicante Paradise Studio"
+          />
+        </View>
       </View>
     </View>
   );
@@ -283,20 +325,23 @@ export const BrandedTopBar: React.FC<BrandedTopBarProps> = ({
 
 const styles = StyleSheet.create({
   topBarContainer: {
-    backgroundColor: '#111116',
-    borderBottomWidth: 1,
-    borderBottomColor: '#1E1E28',
-    height: 40,
+    backgroundColor: '#0E0E14',
+    borderBottomWidth: 1.5,
+    borderBottomColor: '#1C1C28',
+    minHeight: 56,
+    paddingVertical: 7,
+    paddingHorizontal: 20,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 16,
     zIndex: 100,
+    // @ts-ignore web shadow
+    boxShadow: '0 2px 12px rgba(0,0,0,0.45)',
   },
   leftSection: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 14,
+    gap: 16,
   },
   socialIconBtn: {
     color: '#D1D5DB',
@@ -306,11 +351,40 @@ const styles = StyleSheet.create({
   },
   centerSection: {
     flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 12,
+  },
+  brandTitleContainer: {
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  brandTitleText: {
+    color: '#FFFFFF',
+    fontSize: 15,
+    fontWeight: '700',
+    letterSpacing: 2.4,
+    fontFamily: Platform.select({
+      web: 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+      default: undefined,
+    }),
+    textTransform: 'uppercase',
   },
   rightSection: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
+    gap: 12,
+  },
+  clapperboardContainer: {
+    height: 42,
+    width: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginLeft: 4,
+  },
+  clapperboardImage: {
+    width: 42,
+    height: 40,
   },
   emailBadge: {
     flexDirection: 'row',
