@@ -343,6 +343,47 @@ class VmixService {
       return false;
     }
   }
+
+  /**
+   * Set Audio Auto (Audio-Follows-Video / AFV) for a specific camera in vMix.
+   * afvEnabled = false -> Function=AudioAutoOff (Audio Fijo / unlinked from video switching)
+   * afvEnabled = true  -> Function=AudioAutoOn  (Audio automatically follows camera switching)
+   */
+  public async setCameraAudioAuto(cameraId: string, afvEnabled: boolean): Promise<boolean> {
+    try {
+      const defaultIndex = cameraId.replace(/\D/g, '') || '1';
+      const mappedInput = this.config.cameraMap[cameraId] || defaultIndex;
+      const fn = afvEnabled ? 'AudioAutoOn' : 'AudioAutoOff';
+      const result = await this.dispatchCommand(fn, mappedInput);
+      return result.success;
+    } catch (err: any) {
+      console.warn(`[VmixService] setCameraAudioAuto(${cameraId}, ${afvEnabled}) caught error:`, err.message);
+      return false;
+    }
+  }
+
+  /**
+   * Set Audio Auto for all cameras in vMix simultaneously.
+   * afvEnabled = false -> AudioAutoOff (Audio Fijo / Desvincular Cámaras)
+   * afvEnabled = true  -> AudioAutoOn  (AFV Cámaras)
+   */
+  public async setAllCamerasAudioAuto(cameraCount: number, afvEnabled: boolean): Promise<boolean> {
+    try {
+      const fn = afvEnabled ? 'AudioAutoOn' : 'AudioAutoOff';
+      console.log(`[VmixService] Setting Audio Auto (${fn}) for ${cameraCount} cameras...`);
+      const promises = Array.from({ length: cameraCount }, async (_, i) => {
+        const camId = `cam${i + 1}`;
+        const defaultIndex = `${i + 1}`;
+        const mappedInput = this.config.cameraMap[camId] || defaultIndex;
+        return this.dispatchCommand(fn, mappedInput);
+      });
+      await Promise.allSettled(promises);
+      return true;
+    } catch (err: any) {
+      console.warn(`[VmixService] setAllCamerasAudioAuto(${afvEnabled}) caught error:`, err.message);
+      return false;
+    }
+  }
 }
 
 export const vmixService = new VmixService();

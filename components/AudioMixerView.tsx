@@ -7,6 +7,7 @@ import {
   ScrollView,
   Platform,
 } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { vmixService } from '../services/vmixService';
 
 export interface AudioMixerViewProps {
@@ -159,6 +160,41 @@ export const AudioMixerView: React.FC<AudioMixerViewProps> = ({
   // Right-side utilities
   const [activeAux, setActiveAux] = useState<boolean>(false);
   const [activeGroups, setActiveGroups] = useState<boolean>(false);
+
+  // Audio Fijo (AFV unlinking) state
+  const [isAudioFijo, setIsAudioFijo] = useState<boolean>(false);
+
+  // Restore Audio Fijo state from storage
+  useEffect(() => {
+    let isMounted = true;
+    AsyncStorage.getItem('@intercon_audio_fijo_state')
+      .then((saved) => {
+        if (isMounted && saved !== null) {
+          setIsAudioFijo(saved === 'true');
+        }
+      })
+      .catch(() => {});
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  // Global toggle handler for Audio Fijo / AFV Cámaras
+  const handleToggleAudioFijo = useCallback(async () => {
+    const nextState = !isAudioFijo;
+    setIsAudioFijo(nextState);
+    try {
+      await AsyncStorage.setItem('@intercon_audio_fijo_state', nextState ? 'true' : 'false');
+    } catch (err) {
+      console.warn('[AudioMixerView] Failed to persist audio fijo state:', err);
+    }
+    // When Audio Fijo is engaged (nextState === true), AFV is turned OFF (AudioAutoOff)
+    // When Audio Fijo is disengaged (nextState === false), AFV is restored (AudioAutoOn)
+    const afvEnabled = !nextState;
+    vmixService.setAllCamerasAudioAuto(cameraCount, afvEnabled).catch((err) => {
+      console.warn('[AudioMixerView] setAllCamerasAudioAuto error:', err);
+    });
+  }, [isAudioFijo, cameraCount]);
 
   // Pointer drag tracking
   const draggingTargetRef = useRef<{ type: 'fader' | 'pan'; id: string; startY?: number; startVal?: number } | null>(null);
@@ -619,8 +655,27 @@ export const AudioMixerView: React.FC<AudioMixerViewProps> = ({
       <View style={styles.consoleTopRibbon}>
         <View style={styles.ribbonLeft}>
           <Text style={styles.ribbonTitle}>CONTROL DE SONIDO</Text>
-          <Text style={styles.ribbonSubtitle}>8 CANALES DE CÁMARA • STEREO / DUAL-MONO SPLIT</Text>
+          <Text style={styles.ribbonSubtitle}>{cameraCount} CANALES DE CÁMARA • STEREO / DUAL-MONO SPLIT</Text>
         </View>
+
+        {/* Global AFV Toggle: Audio Fijo (Desvincular Cámaras) */}
+        <TouchableOpacity
+          style={[styles.audioFijoBtn, isAudioFijo && styles.audioFijoBtnActive]}
+          onPress={handleToggleAudioFijo}
+          activeOpacity={0.8}
+          accessibilityRole="button"
+          accessibilityLabel="Audio Fijo (Desvincular Cámaras)"
+        >
+          <View style={[styles.audioFijoDot, isAudioFijo && styles.audioFijoDotActive]} />
+          <Text style={[styles.audioFijoBtnText, isAudioFijo && styles.audioFijoBtnTextActive]}>
+            {isAudioFijo ? 'Audio Fijo (Desvincular Cámaras) • ACTIVO' : 'Audio Fijo (Desvincular Cámaras)'}
+          </Text>
+          <View style={[styles.audioFijoBadge, isAudioFijo && styles.audioFijoBadgeActive]}>
+            <Text style={[styles.audioFijoBadgeText, isAudioFijo && styles.audioFijoBadgeTextActive]}>
+              {isAudioFijo ? '🔒 DESVINCULADO' : '⚡ AFV CÁMARAS'}
+            </Text>
+          </View>
+        </TouchableOpacity>
 
         <View style={styles.ribbonRight}>
           <View style={styles.badgePfl}>
@@ -1300,6 +1355,69 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 5,
     marginBottom: 6,
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  audioFijoBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#151722',
+    borderWidth: 1.5,
+    borderColor: '#2A2E44',
+    borderRadius: 6,
+    paddingVertical: 4.5,
+    paddingHorizontal: 12,
+    gap: 8,
+    cursor: 'pointer' as any,
+  },
+  audioFijoBtnActive: {
+    backgroundColor: 'rgba(0, 230, 118, 0.14)',
+    borderColor: '#00E676',
+    // @ts-ignore web shadow
+    boxShadow: '0 0 14px rgba(0, 230, 118, 0.45)',
+  },
+  audioFijoDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#5C627E',
+  },
+  audioFijoDotActive: {
+    backgroundColor: '#00E676',
+    // @ts-ignore web shadow
+    boxShadow: '0 0 8px #00E676',
+  },
+  audioFijoBtnText: {
+    color: '#B0B5C9',
+    fontSize: 10.5,
+    fontWeight: '800',
+    letterSpacing: 0.5,
+  },
+  audioFijoBtnTextActive: {
+    color: '#00E676',
+    fontWeight: '900',
+  },
+  audioFijoBadge: {
+    backgroundColor: '#202436',
+    borderWidth: 1,
+    borderColor: '#323854',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  audioFijoBadgeActive: {
+    backgroundColor: '#00E676',
+    borderColor: '#00E676',
+  },
+  audioFijoBadgeText: {
+    color: '#8E96B5',
+    fontSize: 8.5,
+    fontWeight: '900',
+    letterSpacing: 0.4,
+  },
+  audioFijoBadgeTextActive: {
+    color: '#041F0E',
+    fontWeight: '900',
   },
   ribbonLeft: {
     flexDirection: 'row',
