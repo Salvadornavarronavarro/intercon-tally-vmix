@@ -230,8 +230,7 @@ export const AudioMixerView: React.FC<AudioMixerViewProps> = ({
           }
 
           const isPgm = activeProgramCamera === ch.id;
-          const isPvw = activePreviewCamera === ch.id;
-          const boost = isPgm ? 0.38 : isPvw ? 0.18 : 0.05;
+          const boost = isAudioFijo ? 0.32 : (isPgm ? 0.38 : 0.08);
 
           const wave =
             Math.sin(now / (230 + idx * 60)) * 0.23 +
@@ -301,7 +300,7 @@ export const AudioMixerView: React.FC<AudioMixerViewProps> = ({
     }, 75);
 
     return () => clearInterval(timer);
-  }, [activeProgramCamera, activePreviewCamera, masterMuted, masterVolume, masterMode, masterVolumeL, masterVolumeR]);
+  }, [activeProgramCamera, activePreviewCamera, masterMuted, masterVolume, masterMode, masterVolumeL, masterVolumeR, isAudioFijo]);
 
   // Channel Actions
   const handleToggleMute = (camId: string) => {
@@ -700,20 +699,39 @@ export const AudioMixerView: React.FC<AudioMixerViewProps> = ({
             style={styles.channelsRackScroll}
           >
             {channels.map((ch) => {
-            const isPgm = activeProgramCamera === ch.id;
-            const isPvw = activePreviewCamera === ch.id;
             const isSplit = ch.mode === 'split';
 
             // Rotation angle: -100 (L) = -135deg, 0 (C) = 0deg, +100 (R) = +135deg
             const knobAngle = (ch.pan / 100) * 135;
+
+            // Audio Signal & Routing Logic (Decoupled from Video Switcher)
+            const hasAudioSignal = isSplit
+              ? ch.volumeA > 0.02 || ch.volumeB > 0.02
+              : ch.volume > 0.02;
+
+            const isAudioRoutedToMaster = !ch.muted && hasAudioSignal && !masterMuted;
+
+            // Strict Audio-Driven ON AIR:
+            // - When Audio Fijo (Desvincular Cámaras) is ACTIVE: Switching cameras on Program has ZERO
+            //   effect on audio channels. Any unmuted channel routing audio to Master is ON AIR (red border & ON AIR badge).
+            // - When Audio Fijo is INACTIVE (AFV mode): Audio follows video, so only the Program camera
+            //   is ON AIR, and ONLY IF it is unmuted and actively routed to master.
+            // - In all cases: Muted channels (ch.muted === true) remain completely dark/inactive.
+            const isAudioOnAir = isAudioFijo
+              ? isAudioRoutedToMaster
+              : (activeProgramCamera === ch.id && isAudioRoutedToMaster);
+
+            // Channel active/live audio (unmuted with signal, but not currently on air in AFV mode)
+            const isAudioActive = !isAudioOnAir && !ch.muted && hasAudioSignal;
 
             return (
               <View
                 key={ch.id}
                 style={[
                   styles.stripCard,
-                  isPgm && styles.stripCardPgm,
-                  isPvw && styles.stripCardPvw,
+                  isAudioOnAir && styles.stripCardOnAir,
+                  isAudioActive && styles.stripCardActiveAudio,
+                  ch.muted && styles.stripCardMuted,
                   isSplit && styles.stripCardSplit,
                 ]}
               >
@@ -723,11 +741,14 @@ export const AudioMixerView: React.FC<AudioMixerViewProps> = ({
                     <View
                       style={[
                         styles.chNumberBadge,
-                        isPgm && styles.chBadgePgm,
-                        isPvw && styles.chBadgePvw,
+                        isAudioOnAir && styles.chBadgeOnAir,
+                        isAudioActive && styles.chBadgeActiveAudio,
+                        ch.muted && styles.chBadgeMuted,
                       ]}
                     >
-                      <Text style={styles.chNumberText}>{ch.num}</Text>
+                      <Text style={[styles.chNumberText, ch.muted && styles.chNumberTextMuted]}>
+                        {ch.num}
+                      </Text>
                     </View>
 
                     {/* Mode Switcher Button: STEREO / SPLIT */}
@@ -750,9 +771,13 @@ export const AudioMixerView: React.FC<AudioMixerViewProps> = ({
                     </TouchableOpacity>
                   </View>
 
-                  {isPgm ? (
+                  {isAudioOnAir ? (
                     <View style={styles.liveTag}>
                       <Text style={styles.liveTagText}>ON AIR</Text>
+                    </View>
+                  ) : isAudioActive ? (
+                    <View style={styles.liveTagActive}>
+                      <Text style={styles.liveTagActiveText}>LIVE</Text>
                     </View>
                   ) : null}
                 </View>
@@ -1514,6 +1539,23 @@ const styles = StyleSheet.create({
     borderColor: '#00E676',
     backgroundColor: '#0D1713',
   },
+  stripCardOnAir: {
+    borderColor: '#FF1744',
+    backgroundColor: '#1A0E13',
+    // @ts-ignore web shadow
+    boxShadow: '0 0 10px rgba(255, 23, 68, 0.4)',
+  },
+  stripCardActiveAudio: {
+    borderColor: '#00E676',
+    backgroundColor: '#0D1713',
+    // @ts-ignore web shadow
+    boxShadow: '0 0 8px rgba(0, 230, 118, 0.25)',
+  },
+  stripCardMuted: {
+    opacity: 0.75,
+    borderColor: '#191924',
+    backgroundColor: '#0B0B10',
+  },
   stripCardSplit: {
     borderColor: '#3D3422',
   },
@@ -1545,11 +1587,26 @@ const styles = StyleSheet.create({
     backgroundColor: '#007E33',
     borderColor: '#00E676',
   },
+  chBadgeOnAir: {
+    backgroundColor: '#D50000',
+    borderColor: '#FF1744',
+  },
+  chBadgeActiveAudio: {
+    backgroundColor: '#007E33',
+    borderColor: '#00E676',
+  },
+  chBadgeMuted: {
+    backgroundColor: '#14141E',
+    borderColor: '#222230',
+  },
   chNumberText: {
     color: '#FFFFFF',
     fontSize: 11.5,
     fontWeight: '900',
     letterSpacing: 0.5,
+  },
+  chNumberTextMuted: {
+    color: '#606078',
   },
   modeToggleButton: {
     paddingHorizontal: 5,
@@ -1587,6 +1644,18 @@ const styles = StyleSheet.create({
   },
   liveTagText: {
     color: '#FFFFFF',
+    fontSize: 7,
+    fontWeight: '900',
+  },
+  liveTagActive: {
+    marginTop: 2,
+    backgroundColor: '#007E33',
+    paddingHorizontal: 4,
+    paddingVertical: 1,
+    borderRadius: 2,
+  },
+  liveTagActiveText: {
+    color: '#E0FFE8',
     fontSize: 7,
     fontWeight: '900',
   },
