@@ -91,19 +91,9 @@ export const BrandedTopBar: React.FC<BrandedTopBarProps> = ({
     <View style={styles.topBarContainer}>
       {/* 1. Left Section: Social & Contact Links */}
       <View style={styles.leftSection}>
-        {/* WhatsApp: valid link targeting web.whatsapp.com */}
+        {/* Facebook */}
         <SocialLink
-          href="https://web.whatsapp.com"
-          title="WhatsApp Alicante Paradise Studios"
-        >
-          <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
-            <path d="M12.04 2C6.58 2 2.13 6.45 2.13 11.91C2.13 13.66 2.59 15.36 3.45 16.86L2.05 22L7.3 20.62C8.75 21.41 10.38 21.83 12.04 21.83C17.5 21.83 21.95 17.38 21.95 11.92C21.95 9.27 20.92 6.78 19.05 4.91C17.18 3.03 14.69 2 12.04 2ZM12.05 20.15C10.57 20.15 9.12 19.76 7.85 19.01L7.55 18.83L4.43 19.65L5.26 16.61L5.06 16.29C4.24 14.99 3.8 13.47 3.8 11.91C3.8 7.37 7.5 3.67 12.05 3.67C14.25 3.67 16.32 4.53 17.88 6.09C19.44 7.65 20.29 9.72 20.29 11.92C20.28 16.46 16.58 20.15 12.05 20.15ZM16.57 14.39C16.32 14.27 15.1 13.67 14.87 13.58C14.65 13.5 14.48 13.46 14.32 13.7C14.15 13.95 13.68 14.5 13.54 14.66C13.39 14.83 13.25 14.85 13 14.73C12.75 14.6 11.95 14.34 11 13.49C10.26 12.83 9.76 12.02 9.61 11.77C9.46 11.52 9.6 11.39 9.72 11.27C9.83 11.16 9.97 10.98 10.09 10.84C10.22 10.7 10.26 10.6 10.34 10.43C10.42 10.26 10.38 10.12 10.32 10C10.26 9.88 9.76 8.65 9.55 8.15C9.35 7.66 9.15 7.73 9 7.72C8.86 7.71 8.7 7.71 8.53 7.71C8.36 7.71 8.09 7.77 7.86 8.02C7.63 8.27 7 8.86 7 10.06C7 11.26 7.88 12.42 8 12.58C8.12 12.74 9.73 15.23 12.21 16.3C12.8 16.55 13.25 16.7 13.61 16.82C14.21 17.01 14.75 16.98 15.18 16.92C15.66 16.85 16.66 16.32 16.87 15.73C17.08 15.14 17.08 14.64 17.02 14.54C16.96 14.44 16.82 14.38 16.57 14.39Z"/>
-          </svg>
-        </SocialLink>
-
-        {/* Facebook: valid link targeting facebook.com */}
-        <SocialLink
-          href="https://www.facebook.com"
+          href="https://www.facebook.com/profile.php?id=61583757137099"
           title="Facebook Alicante Paradise Studios"
         >
           <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
@@ -111,19 +101,9 @@ export const BrandedTopBar: React.FC<BrandedTopBarProps> = ({
           </svg>
         </SocialLink>
 
-        {/* Twitter / X: valid link targeting twitter.com */}
+        {/* TikTok */}
         <SocialLink
-          href="https://twitter.com"
-          title="X / Twitter Alicante Paradise Studios"
-        >
-          <svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor">
-            <path d="M18.244 2.25H21.552L14.325 10.511L22.827 21.75H16.171L10.957 14.933L4.992 21.75H1.681L9.41 12.917L1.254 2.25H8.08L12.793 8.481L18.244 2.25ZM17.083 19.77H18.916L7.084 4.126H5.117L17.083 19.77Z"/>
-          </svg>
-        </SocialLink>
-
-        {/* TikTok: valid link targeting tiktok.com */}
-        <SocialLink
-          href="https://www.tiktok.com"
+          href="https://www.tiktok.com/@alicante.paradise.studio"
           title="TikTok Alicante Paradise Studios"
         >
           <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
@@ -131,7 +111,17 @@ export const BrandedTopBar: React.FC<BrandedTopBarProps> = ({
           </svg>
         </SocialLink>
 
-        {/* Email: mailto link to company email */}
+        {/* Telegram */}
+        <SocialLink
+          href="https://t.me/alicanteparadisestudios"
+          title="Telegram Alicante Paradise Studios"
+        >
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
+            <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm4.64 6.8c-.15 1.58-.8 5.42-1.13 7.19-.14.75-.42 1-.68 1.03-.58.05-1.02-.38-1.58-.75-.88-.58-1.38-.94-2.23-1.5-.99-.65-.35-1.01.22-1.59.15-.15 2.71-2.48 2.76-2.69a.2.2 0 0 0-.05-.18c-.06-.05-.14-.03-.21-.02-.09.02-1.49.95-4.22 2.79-.4.27-.76.41-1.08.4-.36-.01-1.04-.2-1.55-.37-.63-.2-1.12-.31-1.08-.66.02-.18.27-.36.75-.55 2.92-1.27 4.86-2.11 5.83-2.51 2.78-1.16 3.35-1.36 3.73-1.36.08 0 .27.02.39.12.1.08.13.19.14.27-.01.06.01.24 0 .38z"/>
+          </svg>
+        </SocialLink>
+
+        {/* Email */}
         <SocialLink
           href="mailto:alicanteparadisestudios@gmail.com"
           title="Email alicanteparadisestudios@gmail.com"
