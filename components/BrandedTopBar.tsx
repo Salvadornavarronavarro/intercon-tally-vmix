@@ -30,13 +30,41 @@ interface SocialLinkProps {
 
 const SocialLink: React.FC<SocialLinkProps> = ({ href, title, children }) => {
   const [isHovered, setIsHovered] = useState(false);
+  const isMailto = href.startsWith('mailto:');
 
   if (Platform.OS === 'web') {
+    if (isMailto) {
+      // Standard native anchor for email client invocation without opening blank browser windows
+      return (
+        <a
+          href={href}
+          title={title}
+          aria-label={title}
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            color: isHovered ? '#FFFFFF' : '#D1D5DB',
+            opacity: isHovered ? 1 : 0.75,
+            padding: 4,
+            textDecoration: 'none',
+            cursor: 'pointer',
+            transition: 'opacity 0.15s ease, color 0.15s ease',
+          }}
+          onMouseEnter={() => setIsHovered(true)}
+          onMouseLeave={() => setIsHovered(false)}
+        >
+          {children}
+        </a>
+      );
+    }
+
+    // External social links open in new tab with security rels
     return (
       <a
         href={href}
-        target={href.startsWith('mailto:') ? undefined : '_blank'}
-        rel={href.startsWith('mailto:') ? undefined : 'noopener noreferrer'}
+        target="_blank"
+        rel="noopener noreferrer"
         title={title}
         aria-label={title}
         style={{
