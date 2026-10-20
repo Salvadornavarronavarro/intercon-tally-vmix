@@ -118,6 +118,8 @@ export const BrandedTopBar: React.FC<BrandedTopBarProps> = ({
   const [isLogoutHovered, setIsLogoutHovered] = useState(false);
   const [isLoginHovered, setIsLoginHovered] = useState(false);
 
+  const usernameDisplay = authSession?.email ? authSession.email.split('@')[0] : '';
+
   useEffect(() => {
     if (typeof document !== 'undefined') {
       document.title = 'V-Controller';
@@ -126,51 +128,22 @@ export const BrandedTopBar: React.FC<BrandedTopBarProps> = ({
 
   return (
     <View style={styles.topBarContainer}>
-      {/* 1. Left Section: Social & Contact Links */}
+      {/* 1. Left Section: Clapperboard Logo -> V-CONTROLLER -> Contact Icons */}
       <View style={styles.leftSection}>
-        {/* Facebook */}
-        <SocialLink
-          href="https://www.facebook.com/profile.php?id=61583757137099"
-          title="Facebook Alicante Paradise Studios"
+        {/* Alicante Paradise Studio Clapperboard Logo */}
+        <View
+          style={styles.clapperboardContainer}
+          {...(Platform.OS === 'web' ? ({ title: 'Alicante Paradise Studio' } as any) : {})}
         >
-          <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
-            <path d="M24 12.073C24 5.405 18.627 0 12 0S0 5.405 0 12.073C0 18.1 4.388 23.094 10.125 24V15.563H7.078V12.073H10.125V9.413C10.125 6.388 11.916 4.71 14.658 4.71C15.97 4.71 17.344 4.945 17.344 4.945V7.915H15.83C14.34 7.915 13.875 8.845 13.875 9.799V12.073H17.203L16.671 15.563H13.875V24C19.612 23.094 24 18.1 24 12.073Z"/>
-          </svg>
-        </SocialLink>
+          <Image
+            source={clapperboardLogo}
+            style={styles.clapperboardImage}
+            resizeMode="contain"
+            accessibilityLabel="Alicante Paradise Studio"
+          />
+        </View>
 
-        {/* TikTok */}
-        <SocialLink
-          href="https://www.tiktok.com/@alicante.paradise.studio"
-          title="TikTok Alicante Paradise Studios"
-        >
-          <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
-            <path d="M19.59 6.69a4.83 4.83 0 0 1-3.77-4.25V2h-3.45v13.67a2.89 2.89 0 0 1-5.2 1.74 2.89 2.89 0 0 1 2.31-4.64c.298-.002.595.042.88.13V9.4a6.33 6.33 0 0 0-1-.08A6.34 6.34 0 0 0 3 15.66a6.34 6.34 0 0 0 10.82 4.47 6.29 6.29 0 0 0 1.95-4.52V8.04a8.16 8.16 0 0 0 4.82 1.57v-3.48a4.85 4.85 0 0 1-1-.44Z"/>
-          </svg>
-        </SocialLink>
-
-        {/* Telegram */}
-        <SocialLink
-          href="https://t.me/alicanteparadisestudios"
-          title="Telegram Alicante Paradise Studios"
-        >
-          <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
-            <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm4.64 6.8c-.15 1.58-.8 5.42-1.13 7.19-.14.75-.42 1-.68 1.03-.58.05-1.02-.38-1.58-.75-.88-.58-1.38-.94-2.23-1.5-.99-.65-.35-1.01.22-1.59.15-.15 2.71-2.48 2.76-2.69a.2.2 0 0 0-.05-.18c-.06-.05-.14-.03-.21-.02-.09.02-1.49.95-4.22 2.79-.4.27-.76.41-1.08.4-.36-.01-1.04-.2-1.55-.37-.63-.2-1.12-.31-1.08-.66.02-.18.27-.36.75-.55 2.92-1.27 4.86-2.11 5.83-2.51 2.78-1.16 3.35-1.36 3.73-1.36.08 0 .27.02.39.12.1.08.13.19.14.27-.01.06.01.24 0 .38z"/>
-          </svg>
-        </SocialLink>
-
-        {/* Email */}
-        <SocialLink
-          href="mailto:alicanteparadisestudios@gmail.com"
-          title="Email alicanteparadisestudios@gmail.com"
-        >
-          <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
-            <path d="M20 4H4C2.9 4 2.01 4.9 2.01 6L2 18C2 19.1 2.9 20 4 20H20C21.1 20 22 19.1 22 18V6C22 4.9 21.1 4 20 4ZM20 8L12 13L4 8V6L12 11L20 6V8Z"/>
-          </svg>
-        </SocialLink>
-      </View>
-
-      {/* 2. Center Section: Application Branding ("V-CONTROLLER") */}
-      <View style={styles.centerSection}>
+        {/* V-CONTROLLER Brand Title with RGB Underline */}
         <View style={styles.brandTitleContainer}>
           <Text style={styles.brandTitleText}>V-CONTROLLER</Text>
           <svg
@@ -190,17 +163,63 @@ export const BrandedTopBar: React.FC<BrandedTopBarProps> = ({
             <polygon points="85,2 109,2 105,7 81,7" fill="#1E88E5" />
           </svg>
         </View>
+
+        {/* Subtle separator */}
+        <View style={styles.brandDivider} />
+
+        {/* Contact & Social Links in exact order: Facebook, TikTok, Telegram, Email */}
+        <View style={styles.socialIconsRow}>
+          {/* Facebook */}
+          <SocialLink
+            href="https://www.facebook.com/profile.php?id=61583757137099"
+            title="Facebook Alicante Paradise Studios"
+          >
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
+              <path d="M24 12.073C24 5.405 18.627 0 12 0S0 5.405 0 12.073C0 18.1 4.388 23.094 10.125 24V15.563H7.078V12.073H10.125V9.413C10.125 6.388 11.916 4.71 14.658 4.71C15.97 4.71 17.344 4.945 17.344 4.945V7.915H15.83C14.34 7.915 13.875 8.845 13.875 9.799V12.073H17.203L16.671 15.563H13.875V24C19.612 23.094 24 18.1 24 12.073Z"/>
+            </svg>
+          </SocialLink>
+
+          {/* TikTok */}
+          <SocialLink
+            href="https://www.tiktok.com/@alicante.paradise.studio"
+            title="TikTok Alicante Paradise Studios"
+          >
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
+              <path d="M19.59 6.69a4.83 4.83 0 0 1-3.77-4.25V2h-3.45v13.67a2.89 2.89 0 0 1-5.2 1.74 2.89 2.89 0 0 1 2.31-4.64c.298-.002.595.042.88.13V9.4a6.33 6.33 0 0 0-1-.08A6.34 6.34 0 0 0 3 15.66a6.34 6.34 0 0 0 10.82 4.47 6.29 6.29 0 0 0 1.95-4.52V8.04a8.16 8.16 0 0 0 4.82 1.57v-3.48a4.85 4.85 0 0 1-1-.44Z"/>
+            </svg>
+          </SocialLink>
+
+          {/* Telegram */}
+          <SocialLink
+            href="https://t.me/alicanteparadisestudios"
+            title="Telegram Alicante Paradise Studios"
+          >
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
+              <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm4.64 6.8c-.15 1.58-.8 5.42-1.13 7.19-.14.75-.42 1-.68 1.03-.58.05-1.02-.38-1.58-.75-.88-.58-1.38-.94-2.23-1.5-.99-.65-.35-1.01.22-1.59.15-.15 2.71-2.48 2.76-2.69a.2.2 0 0 0-.05-.18c-.06-.05-.14-.03-.21-.02-.09.02-1.49.95-4.22 2.79-.4.27-.76.41-1.08.4-.36-.01-1.04-.2-1.55-.37-.63-.2-1.12-.31-1.08-.66.02-.18.27-.36.75-.55 2.92-1.27 4.86-2.11 5.83-2.51 2.78-1.16 3.35-1.36 3.73-1.36.08 0 .27.02.39.12.1.08.13.19.14.27-.01.06.01.24 0 .38z"/>
+            </svg>
+          </SocialLink>
+
+          {/* Email */}
+          <SocialLink
+            href="mailto:alicanteparadisestudios@gmail.com"
+            title="Email alicanteparadisestudios@gmail.com"
+          >
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
+              <path d="M20 4H4C2.9 4 2.01 4.9 2.01 6L2 18C2 19.1 2.9 20 4 20H20C21.1 20 22 19.1 22 18V6C22 4.9 21.1 4 20 4ZM20 8L12 13L4 8V6L12 11L20 6V8Z"/>
+            </svg>
+          </SocialLink>
+        </View>
       </View>
 
-      {/* 3. Right Section: Authenticated Email Badge + Role + Logout + Clapperboard Logo */}
+      {/* 2. Right Section: Authenticated User Badge (truncated email) + Role + Logout Button */}
       <View style={styles.rightSection}>
         {authSession ? (
           <>
-            {/* Logged-in User Email Badge */}
+            {/* Logged-in Username Badge (Truncated before @ for privacy) */}
             <View
               style={styles.emailBadge}
               {...(Platform.OS === 'web'
-                ? ({ title: `Sesión activa: ${authSession.email}` } as any)
+                ? ({ title: `Usuario: ${authSession.email}` } as any)
                 : {})}
             >
               <View style={styles.activeDot} />
@@ -214,7 +233,7 @@ export const BrandedTopBar: React.FC<BrandedTopBarProps> = ({
                 <path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/>
               </svg>
               <Text style={styles.emailBadgeText} numberOfLines={1}>
-                {authSession.email}
+                {usernameDisplay}
               </Text>
             </View>
 
@@ -305,19 +324,6 @@ export const BrandedTopBar: React.FC<BrandedTopBarProps> = ({
             <Text style={styles.loginButtonText}>Iniciar Sesión</Text>
           </TouchableOpacity>
         )}
-
-        {/* 4. Far Right: "Alicante Paradise Studio" Clapperboard Logo */}
-        <View
-          style={styles.clapperboardContainer}
-          {...(Platform.OS === 'web' ? ({ title: 'Alicante Paradise Studio' } as any) : {})}
-        >
-          <Image
-            source={clapperboardLogo}
-            style={styles.clapperboardImage}
-            resizeMode="contain"
-            accessibilityLabel="Alicante Paradise Studio"
-          />
-        </View>
       </View>
     </View>
   );
@@ -341,23 +347,22 @@ const styles = StyleSheet.create({
   leftSection: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 16,
+    gap: 14,
   },
-  socialIconBtn: {
-    color: '#D1D5DB',
-    padding: 4,
+  clapperboardContainer: {
+    height: 42,
+    width: 44,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  centerSection: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 12,
+  clapperboardImage: {
+    width: 42,
+    height: 40,
   },
   brandTitleContainer: {
     alignItems: 'center',
     justifyContent: 'center',
+    paddingHorizontal: 2,
   },
   brandTitleText: {
     color: '#FFFFFF',
@@ -370,21 +375,27 @@ const styles = StyleSheet.create({
     }),
     textTransform: 'uppercase',
   },
+  brandDivider: {
+    width: 1,
+    height: 22,
+    backgroundColor: '#262638',
+    marginHorizontal: 4,
+  },
+  socialIconsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 14,
+  },
+  socialIconBtn: {
+    color: '#D1D5DB',
+    padding: 4,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   rightSection: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
-  },
-  clapperboardContainer: {
-    height: 42,
-    width: 44,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginLeft: 4,
-  },
-  clapperboardImage: {
-    width: 42,
-    height: 40,
+    gap: 10,
   },
   emailBadge: {
     flexDirection: 'row',
