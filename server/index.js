@@ -361,7 +361,10 @@ const GOOGLE_APPS_SCRIPT_WEBHOOK_URL =
   process.env.GOOGLE_SHEETS_WEBHOOK_URL ||
   'https://script.google.com/macros/s/AKfycbwDVK2CCI9xgtVNlT0_nHtDs9TRQO19L-6UXNipPIE5o12uh5gaZpqGSlluZxA2HhpgMg/exec';
 
-const recentWebhookDispatches = new Map();
+// In-memory cache for strict 10-minute user login deduplication
+// Key: normalized email (trimmed, lowercase) -> Value: { room: string, role: string, timestamp: number }
+const recentUserLogins = new Map();
+const LOGIN_DEDUP_WINDOW_MS = 10 * 60 * 1000; // 10 minutes
 
 async function syncToGoogleSheets(entry) {
   const webhookUrl = GOOGLE_APPS_SCRIPT_WEBHOOK_URL;
@@ -375,30 +378,13 @@ async function syncToGoogleSheets(entry) {
 
   if (!email) return;
 
-  // Deduplicate rapid repeat calls within 15 seconds (prevents duplicate submissions)
-  const dedupKey = `${email}:${room}:${role}`;
-  const now = Date.now();
-  const lastSent = recentWebhookDispatches.get(dedupKey);
-  if (lastSent && now - lastSent < 15000) {
-    console.log(`[GoogleSheetsDispatcher] Suppressing duplicate webhook dispatch for ${dedupKey} (sent ${now - lastSent}ms ago)`);
-    return;
-  }
-  recentWebhookDispatches.set(dedupKey, now);
-
-  // Periodic pruning of old deduplication entries
-  if (recentWebhookDispatches.size > 500) {
-    for (const [k, time] of recentWebhookDispatches.entries()) {
-      if (now - time > 60000) recentWebhookDispatches.delete(k);
-    }
-  }
-
   try {
     const payload = {
       email,
       room,
       role,
     };
-    console.log(`[GoogleSheetsDispatcher] Server-to-server POST to webhook: ${payload.email} (room: ${payload.room}, role: ${payload.role})`);
+    console.log(`[GoogleSheetsDispatcher] Authoritative single POST to webhook: ${payload.email} (room: ${payload.room}, role: ${payload.role})`);
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 10000);
 
@@ -488,11 +474,11 @@ app.get(['/api/rooms/check/:roomName', '/api/rooms/check'], (req, res) => {
   });
 });
 
-// POST /api/subscribers - Registers a verified subscriber lead
-app.post(['/api/subscribers', '/api/auth/register-lead'], async (req, res) => {
+// POST /api/subscribers, /api/auth/register-lead, /api/log-user - Registers a verified subscriber lead
+app.post(['/api/subscribers', '/api/auth/register-lead', '/api/log-user'], async (req, res) => {
   const rawEmail = req.body.email || req.query.email;
-  const role = req.body.role || req.query.role || 'director';
-  const room = req.body.room || req.body.roomId || req.query.room || '';
+  const rawRole = req.body.role || req.query.role || 'director';
+  const rawRoom = req.body.room || req.body.roomId || req.query.room || '';
 
   if (!rawEmail || !isValidServerEmail(rawEmail)) {
     return res.status(400).json({
@@ -503,10 +489,56 @@ app.post(['/api/subscribers', '/api/auth/register-lead'], async (req, res) => {
   }
 
   const cleanEmail = rawEmail.trim().toLowerCase();
+  const cleanRole = String(rawRole).trim().toLowerCase();
+  const cleanRoom = String(rawRoom).trim().toUpperCase();
+  const now = Date.now();
+
+  // Strict In-Memory Deduplication:
+  // If email already logged in during this session / within the last 10 minutes with the same room/role:
+  // DO NOT fire the Google Apps Script webhook again. Just return { status: 'already_logged' }.
+  const existingLogin = recentUserLogins.get(cleanEmail);
+  if (
+    existingLogin &&
+    now - existingLogin.timestamp < LOGIN_DEDUP_WINDOW_MS &&
+    existingLogin.room === cleanRoom &&
+    existingLogin.role === cleanRole
+  ) {
+    const elapsedSec = Math.round((now - existingLogin.timestamp) / 1000);
+    console.log(
+      `[LeadCapture] Suppressed duplicate login for ${cleanEmail} (logged ${elapsedSec}s ago with same room "${cleanRoom}" and role "${cleanRole}"). Returning already_logged.`
+    );
+    return res.status(200).json({
+      success: true,
+      status: 'already_logged',
+      message: 'User already logged during this session within the last 10 minutes.',
+      subscriber: {
+        email: cleanEmail,
+        room: cleanRoom,
+        role: cleanRole,
+      },
+    });
+  }
+
+  // Update in-memory deduplication cache for new user or changed room/role
+  recentUserLogins.set(cleanEmail, {
+    room: cleanRoom,
+    role: cleanRole,
+    timestamp: now,
+  });
+
+  // Prune expired entries
+  if (recentUserLogins.size > 1000) {
+    for (const [key, val] of recentUserLogins.entries()) {
+      if (now - val.timestamp > LOGIN_DEDUP_WINDOW_MS) {
+        recentUserLogins.delete(key);
+      }
+    }
+  }
+
   const entry = {
     email: cleanEmail,
-    room: room.trim(),
-    role: role.trim(),
+    room: cleanRoom,
+    role: cleanRole,
     timestamp: req.body.timestamp || new Date().toISOString(),
     ip: (req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').split(',')[0].trim(),
     userAgent: req.headers['user-agent'] || '',
@@ -517,6 +549,7 @@ app.post(['/api/subscribers', '/api/auth/register-lead'], async (req, res) => {
 
   return res.status(200).json({
     success: true,
+    status: 'logged',
     message: 'Subscriber lead registered successfully.',
     subscriber: {
       email: entry.email,
@@ -746,15 +779,6 @@ function handleClientMessage(ws, message) {
       });
 
       console.log(`[RoomManager] User joined "${targetRoomId}": ${user.name} [${user.role}] (Total in room: ${room.participants.size})`);
-
-      // Dispatch to Google Apps Script webhook whenever a user connects/joins
-      if (user.email) {
-        syncToGoogleSheets({
-          email: user.email,
-          room: targetRoomId,
-          role: user.role,
-        }).catch(() => {});
-      }
 
       // 1. Send existing room snapshot to newly joined user (THIS room only)
       const existingUsers = [];
