@@ -24,6 +24,7 @@ export const DEFAULT_RTC_CONFIGURATION = {
     { urls: 'stun:stun2.l.google.com:19302' },
     { urls: 'stun:stun3.l.google.com:19302' },
     { urls: 'stun:stun4.l.google.com:19302' },
+    { urls: 'stun:relay.metered.ca:80' },
   ],
   iceCandidatePoolSize: 10,
 };
@@ -51,6 +52,8 @@ export class WebRTCAudioService {
   private localStream: MediaStream | null = null;
   private peerConnections: Map<string, RTCPeerConnection> = new Map();
   private iceCandidateQueues: Map<string, any[]> = new Map();
+  private restartingPeers: Set<string> = new Set();
+  private disconnectTimers: Map<string, any> = new Map();
 
   private roomId: string | null = null;
   private localUserId: string | null = null;
@@ -185,6 +188,80 @@ export class WebRTCAudioService {
   }
 
   /**
+   * Ensures that local microphone audio tracks are attached to the RTCPeerConnection
+   * and that their enabled state stays strictly synchronized with the UI.
+   */
+  private ensureLocalTracksAttached(pc: RTCPeerConnection): void {
+    if (!this.localStream) return;
+
+    this.localStream.getAudioTracks().forEach((track) => {
+      track.enabled = this.isMicEnabled;
+    });
+
+    const senders = typeof (pc as any).getSenders === 'function' ? (pc as any).getSenders() : [];
+
+    this.localStream.getAudioTracks().forEach((track) => {
+      const existingSender = senders.find(
+        (s: any) => s.track && s.track.kind === 'audio'
+      );
+
+      if (existingSender) {
+        if (existingSender.track !== track && typeof existingSender.replaceTrack === 'function') {
+          existingSender.replaceTrack(track).catch((err: any) => {
+            console.warn('[WebRTCAudioService] Error replacing track on sender:', err);
+          });
+        }
+      } else {
+        try {
+          pc.addTrack(track, this.localStream!);
+        } catch (err: any) {
+          if (!err?.message?.includes('already')) {
+            console.warn('[WebRTCAudioService] Note adding track to pc:', err);
+          }
+        }
+      }
+    });
+  }
+
+  /**
+   * Resilient ICE restart handler for mobile 4G/5G cell handover and transient signal drops
+   */
+  private async triggerIceRestart(remoteUserId: string): Promise<void> {
+    const pc = this.peerConnections.get(remoteUserId);
+    if (!pc || pc.signalingState === 'closed' || (pc as any).connectionState === 'closed') {
+      return;
+    }
+
+    if (this.restartingPeers.has(remoteUserId)) {
+      console.log(`[WebRTCAudioService] ICE restart already active for peer ${remoteUserId}`);
+      return;
+    }
+
+    this.restartingPeers.add(remoteUserId);
+    console.warn(`[WebRTCAudioService] Initiating ICE restart for peer ${remoteUserId} (mobile/network resilience)...`);
+
+    try {
+      this.ensureLocalTracksAttached(pc);
+
+      if (typeof (pc as any).restartIce === 'function') {
+        try {
+          (pc as any).restartIce();
+        } catch (iceErr) {
+          console.warn('[WebRTCAudioService] Native restartIce() failed, proceeding with offer iceRestart:', iceErr);
+        }
+      }
+
+      await this.initiateOffer(remoteUserId, true);
+    } catch (error) {
+      console.error(`[WebRTCAudioService] ICE restart failed for peer ${remoteUserId}:`, error);
+    } finally {
+      setTimeout(() => {
+        this.restartingPeers.delete(remoteUserId);
+      }, 3500);
+    }
+  }
+
+  /**
    * Creates or retrieves an RTCPeerConnection for a specific remote peer
    */
   private getOrCreatePeerConnection(remoteUserId: string): RTCPeerConnection {
@@ -194,12 +271,8 @@ export class WebRTCAudioService {
     pc = new RTCPeerConnection(DEFAULT_RTC_CONFIGURATION);
     this.peerConnections.set(remoteUserId, pc);
 
-    // Attach local audio tracks to send to the peer
-    if (this.localStream) {
-      this.localStream.getTracks().forEach((track) => {
-        pc!.addTrack(track, this.localStream!);
-      });
-    }
+    // Attach local audio tracks and ensure mic state sync
+    this.ensureLocalTracksAttached(pc);
 
     // Handle local ICE candidates and broadcast to the specific peer
     pc.onicecandidate = (event: any) => {
@@ -221,45 +294,63 @@ export class WebRTCAudioService {
       }
     };
 
-    // Handle connection state changes with network handover resilience
-    let disconnectTimer: any = null;
-    pc.onconnectionstatechange = () => {
-      if (!pc) return;
-      const state = pc.connectionState;
-      console.log(`[WebRTCAudioService] Peer ${remoteUserId} connection state: ${state}`);
+    const clearDisconnectTimer = () => {
+      const existing = this.disconnectTimers.get(remoteUserId);
+      if (existing) {
+        clearTimeout(existing);
+        this.disconnectTimers.delete(remoteUserId);
+      }
+    };
 
-      if (state === 'connected') {
-        if (disconnectTimer) {
-          clearTimeout(disconnectTimer);
-          disconnectTimer = null;
-        }
+    const handleStateEvaluation = (source: string, state: string) => {
+      console.log(`[WebRTCAudioService] Peer ${remoteUserId} ${source} state: ${state}`);
+
+      if (state === 'connected' || state === 'completed') {
+        clearDisconnectTimer();
+        this.restartingPeers.delete(remoteUserId);
+        this.ensureLocalTracksAttached(pc!);
       } else if (state === 'disconnected') {
-        // Network handover window: Wait 5 seconds before attempting ICE restart
-        if (!disconnectTimer) {
-          disconnectTimer = setTimeout(() => {
-            if (pc && pc.connectionState === 'disconnected') {
-              console.warn(`[WebRTCAudioService] Peer ${remoteUserId} still disconnected. Initiating ICE restart...`);
-              this.initiateOffer(remoteUserId, true);
+        // Network handover window (cell tower roaming / WiFi to mobile data):
+        // Wait 3 seconds; if still disconnected or failed, trigger ICE restart
+        if (!this.disconnectTimers.has(remoteUserId)) {
+          const timer = setTimeout(() => {
+            this.disconnectTimers.delete(remoteUserId);
+            if (!pc) return;
+            const connState = (pc as any).connectionState;
+            const iceState = (pc as any).iceConnectionState;
+            if (
+              connState === 'disconnected' ||
+              connState === 'failed' ||
+              iceState === 'disconnected' ||
+              iceState === 'failed'
+            ) {
+              console.warn(
+                `[WebRTCAudioService] Peer ${remoteUserId} still disconnected (${connState}/${iceState}). Triggering ICE restart...`
+              );
+              this.triggerIceRestart(remoteUserId);
             }
-            disconnectTimer = null;
-          }, 5000);
+          }, 3000);
+          this.disconnectTimers.set(remoteUserId, timer);
         }
       } else if (state === 'failed') {
-        if (disconnectTimer) {
-          clearTimeout(disconnectTimer);
-          disconnectTimer = null;
-        }
-        console.warn(`[WebRTCAudioService] Peer ${remoteUserId} connection failed. Attempting ICE restart...`);
-        this.initiateOffer(remoteUserId, true).catch(() => {
-          this.closePeerConnection(remoteUserId);
-        });
+        clearDisconnectTimer();
+        console.warn(`[WebRTCAudioService] Peer ${remoteUserId} ${source} entered 'failed'. Triggering immediate ICE restart...`);
+        this.triggerIceRestart(remoteUserId);
       } else if (state === 'closed') {
-        if (disconnectTimer) {
-          clearTimeout(disconnectTimer);
-          disconnectTimer = null;
-        }
+        clearDisconnectTimer();
+        this.restartingPeers.delete(remoteUserId);
         this.closePeerConnection(remoteUserId);
       }
+    };
+
+    (pc as any).onconnectionstatechange = () => {
+      if (!pc) return;
+      handleStateEvaluation('connection', (pc as any).connectionState);
+    };
+
+    (pc as any).oniceconnectionstatechange = () => {
+      if (!pc) return;
+      handleStateEvaluation('iceConnection', (pc as any).iceConnectionState);
     };
 
     return pc;
@@ -271,6 +362,8 @@ export class WebRTCAudioService {
   private async initiateOffer(remoteUserId: string, iceRestart = false): Promise<void> {
     try {
       const pc = this.getOrCreatePeerConnection(remoteUserId);
+      this.ensureLocalTracksAttached(pc);
+
       const offer = await pc.createOffer({
         offerToReceiveAudio: true,
         offerToReceiveVideo: false,
@@ -297,6 +390,7 @@ export class WebRTCAudioService {
   private async handleOffer(fromUserId: string, sdp: any): Promise<void> {
     try {
       const pc = this.getOrCreatePeerConnection(fromUserId);
+      this.ensureLocalTracksAttached(pc);
 
       // Glare handling: If an offer is received while we also sent a local offer
       if (pc.signalingState !== 'stable') {
@@ -337,8 +431,11 @@ export class WebRTCAudioService {
       const pc = this.peerConnections.get(fromUserId);
       if (!pc) return;
 
-      await pc.setRemoteDescription(new RTCSessionDescription(sdp));
-      await this.flushIceCandidateQueue(fromUserId, pc);
+      if (pc.signalingState === 'have-local-offer') {
+        await pc.setRemoteDescription(new RTCSessionDescription(sdp));
+        await this.flushIceCandidateQueue(fromUserId, pc);
+        this.ensureLocalTracksAttached(pc);
+      }
     } catch (error) {
       console.error('[WebRTCAudioService] Error handling answer from:', fromUserId, error);
     }
@@ -399,6 +496,12 @@ export class WebRTCAudioService {
    * Closes a specific peer's connection cleanly
    */
   private closePeerConnection(peerId: string): void {
+    const timer = this.disconnectTimers.get(peerId);
+    if (timer) {
+      clearTimeout(timer);
+      this.disconnectTimers.delete(peerId);
+    }
+    this.restartingPeers.delete(peerId);
     const pc = this.peerConnections.get(peerId);
     if (pc) {
       try {
@@ -417,6 +520,10 @@ export class WebRTCAudioService {
    */
   async endAudioCall(): Promise<void> {
     this.unbindSignalingListeners();
+
+    this.disconnectTimers.forEach((timer) => clearTimeout(timer));
+    this.disconnectTimers.clear();
+    this.restartingPeers.clear();
 
     // Close all peer connections
     this.peerConnections.forEach((pc) => {
