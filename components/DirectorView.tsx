@@ -414,7 +414,7 @@ export const DirectorView: React.FC = () => {
 
       {/* 3 Prominent Horizontal Navigation Tabs Header */}
       <View style={styles.tabNavContainer}>
-        {/* TAB 1: TALLY & CÁMARAS */}
+        {/* TAB 1: REALIZACIÓN / CÁMARAS */}
         <TouchableOpacity
           style={[
             styles.tabButton,
@@ -431,7 +431,7 @@ export const DirectorView: React.FC = () => {
             ]}
             numberOfLines={1}
           >
-            TALLY & CÁMARAS
+            REALIZACIÓN / CÁMARAS
           </Text>
           {activeProgramCamera ? (
             <View style={styles.tabBadgeLive}>
@@ -448,7 +448,7 @@ export const DirectorView: React.FC = () => {
           ) : null}
         </TouchableOpacity>
 
-        {/* TAB 2: CONTROL DE SONIDO */}
+        {/* TAB 2: SONIDO CONTROL */}
         <TouchableOpacity
           style={[
             styles.tabButton,
@@ -465,7 +465,7 @@ export const DirectorView: React.FC = () => {
             ]}
             numberOfLines={1}
           >
-            CONTROL DE SONIDO
+            SONIDO CONTROL
           </Text>
         </TouchableOpacity>
 
@@ -516,7 +516,7 @@ export const DirectorView: React.FC = () => {
       {/* Main Tab Panels Container (Maintains background WebRTC & vMix connections mounted) */}
       <View style={styles.mainContainer}>
         {/* ==================================================================== */}
-        {/* TAB 1: TALLY & CÁMARAS                                              */}
+        {/* TAB 1: REALIZACIÓN / CÁMARAS                                        */}
         {/* ==================================================================== */}
         <View style={[styles.tabPane, activeTab !== 'tally' && styles.tabPaneHidden]}>
           <ScrollView
@@ -956,7 +956,7 @@ export const DirectorView: React.FC = () => {
         </View>
 
         {/* ==================================================================== */}
-        {/* TAB 2: CONTROL DE SONIDO                                            */}
+        {/* TAB 2: SONIDO CONTROL                                               */}
         {/* ==================================================================== */}
         <View style={[styles.tabPane, activeTab !== 'audio' && styles.tabPaneHidden]}>
           <AudioMixerView
