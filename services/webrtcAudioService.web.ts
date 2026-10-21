@@ -21,8 +21,27 @@ export const DEFAULT_RTC_CONFIGURATION: RTCConfiguration = {
   iceCandidatePoolSize: 10,
 };
 
-// Web voice processing constraints
+// Web voice processing constraints with strict hardware/software noise filtering and echo cancellation
 export const MOBILE_AUDIO_CONSTRAINTS: MediaStreamConstraints = {
+  audio: {
+    echoCancellation: { ideal: true },
+    noiseSuppression: { ideal: true },
+    autoGainControl: { ideal: true },
+    channelCount: 1, // Mono stream for clean speech
+    sampleRate: 48000,
+    latency: { ideal: 0.01 },
+    // Additional speech optimization flags for Chromium / WebKit
+    googEchoCancellation: { ideal: true },
+    googAutoGainControl: { ideal: true },
+    googNoiseSuppression: { ideal: true },
+    googHighpassFilter: { ideal: true },
+    googAudioMirroring: { ideal: false },
+  } as any,
+  video: false,
+};
+
+// Resilient fallback constraints if hardware/OS strictly rejects 48kHz or low-latency requests
+export const FALLBACK_AUDIO_CONSTRAINTS: MediaStreamConstraints = {
   audio: {
     echoCancellation: true,
     noiseSuppression: true,
@@ -78,7 +97,17 @@ export class WebRTCAudioService {
     try {
       if (typeof navigator !== 'undefined' && navigator.mediaDevices?.getUserMedia) {
         try {
-          const stream = await navigator.mediaDevices.getUserMedia(MOBILE_AUDIO_CONSTRAINTS);
+          let stream: MediaStream;
+          try {
+            stream = await navigator.mediaDevices.getUserMedia(MOBILE_AUDIO_CONSTRAINTS);
+          } catch (conErr: any) {
+            if (conErr?.name === 'OverconstrainedError') {
+              console.warn('[WebRTCAudioService-Web] Overconstrained on audio parameters, trying standard fallback:', conErr);
+              stream = await navigator.mediaDevices.getUserMedia(FALLBACK_AUDIO_CONSTRAINTS);
+            } else {
+              throw conErr;
+            }
+          }
           this.localStream = stream;
 
           this.localStream.getAudioTracks().forEach((track) => {
@@ -227,12 +256,21 @@ export class WebRTCAudioService {
 
     if (typeof navigator !== 'undefined' && navigator.mediaDevices?.getUserMedia) {
       try {
-        const stream = await navigator.mediaDevices.getUserMedia(MOBILE_AUDIO_CONSTRAINTS);
+        let stream: MediaStream;
+        try {
+          stream = await navigator.mediaDevices.getUserMedia(MOBILE_AUDIO_CONSTRAINTS);
+        } catch (conErr: any) {
+          if (conErr?.name === 'OverconstrainedError') {
+            stream = await navigator.mediaDevices.getUserMedia(FALLBACK_AUDIO_CONSTRAINTS);
+          } else {
+            throw conErr;
+          }
+        }
         this.localStream = stream;
         this.localStream.getAudioTracks().forEach((t) => {
           t.enabled = this.isMicEnabled;
         });
-        console.log('[WebRTCAudioService-Web] Successfully re-acquired active microphone stream');
+        console.log('[WebRTCAudioService-Web] Successfully re-acquired active microphone stream with noise/echo filtering');
         return true;
       } catch (err) {
         console.warn('[WebRTCAudioService-Web] Could not re-acquire audio stream on reconnect:', err);
@@ -497,6 +535,21 @@ export class WebRTCAudioService {
   private attachRemoteAudioStream(peerId: string, stream: MediaStream): void {
     if (typeof document === 'undefined') return;
 
+    // Strict Feedback & Echo Prevention: Never loop local microphone back into local speakers
+    if (!stream || peerId === this.localUserId) {
+      console.warn('[WebRTCAudioService-Web] Blocked local audio from output playback (feedback prevention)');
+      return;
+    }
+
+    if (this.localStream) {
+      const localTrackIds = new Set(this.localStream.getAudioTracks().map((t) => t.id));
+      const hasLocalTrack = stream.getAudioTracks().some((t) => localTrackIds.has(t.id));
+      if (hasLocalTrack) {
+        console.warn(`[WebRTCAudioService-Web] Detected local track in playback stream for peer ${peerId}. Refusing playback to eliminate acoustic feedback.`);
+        return;
+      }
+    }
+
     let audioEl = this.remoteAudioElements.get(peerId);
     if (!audioEl) {
       audioEl = document.createElement('audio');
@@ -507,12 +560,16 @@ export class WebRTCAudioService {
       audioEl.setAttribute('playsinline', '');
       audioEl.setAttribute('webkit-playsinline', '');
       audioEl.setAttribute('autoplay', '');
+      audioEl.volume = 1.0;
+      audioEl.muted = false;
       audioEl.style.display = 'none';
       document.body.appendChild(audioEl);
       this.remoteAudioElements.set(peerId, audioEl);
     }
 
-    audioEl.srcObject = stream;
+    if (audioEl.srcObject !== stream) {
+      audioEl.srcObject = stream;
+    }
     audioEl.play().catch((err) => {
       console.warn(`[WebRTCAudioService-Web] Remote audio play waiting for user unlock (${peerId}):`, err);
     });

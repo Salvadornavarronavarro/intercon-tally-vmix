@@ -29,13 +29,15 @@ export const DEFAULT_RTC_CONFIGURATION = {
   iceCandidatePoolSize: 10,
 };
 
-// Enforced mobile voice processing constraints for clear production comms
+// Enforced voice processing constraints for clear production comms, noise filtration, and acoustic echo cancellation
 export const MOBILE_AUDIO_CONSTRAINTS = {
   audio: {
-    echoCancellation: true,
-    noiseSuppression: true,
-    autoGainControl: true,
-    channelCount: 1, // Mono broadcast intercom stream to preserve cellular bandwidth
+    echoCancellation: { ideal: true },
+    noiseSuppression: { ideal: true },
+    autoGainControl: { ideal: true },
+    channelCount: 1, // Mono stream for clean speech
+    sampleRate: 48000,
+    latency: { ideal: 0.01 },
   } as any,
   video: false,
 };
@@ -285,9 +287,10 @@ export class WebRTCAudioService {
       }
     };
 
-    // Handle incoming remote audio stream
+    // Handle incoming remote audio stream (strict feedback prevention)
     pc.ontrack = (event: any) => {
       console.log('[WebRTCAudioService] Received remote audio track from:', remoteUserId);
+      if (remoteUserId === this.localUserId) return;
       if (event.streams && event.streams[0]) {
         const stream = event.streams[0] as MediaStream;
         this.notifyRemoteStream(remoteUserId, stream);
