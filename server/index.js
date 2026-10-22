@@ -262,7 +262,8 @@ app.all('/api/vmix', async (req, res) => {
     return res.status(isTimeout ? 504 : 502).json({
       success: false,
       error: 'VMIX_UNREACHABLE',
-      message: isTimeout ? 'Connection timed out (vMix unreachable)' : err.message,
+      message: 'vMix not responding on local IP',
+      details: isTimeout ? 'Timeout 3s' : err.message,
       target: `http://${targetHost}:${targetPort}/api/`,
     });
   }

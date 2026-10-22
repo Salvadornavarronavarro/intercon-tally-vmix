@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -116,6 +116,15 @@ export const DirectorView: React.FC = () => {
     }
   };
 
+  const activeProgramCameraRef = useRef(activeProgramCamera);
+  activeProgramCameraRef.current = activeProgramCamera;
+  const activePreviewCameraRef = useRef(activePreviewCamera);
+  activePreviewCameraRef.current = activePreviewCamera;
+  const setProgramCameraRef = useRef(setProgramCamera);
+  setProgramCameraRef.current = setProgramCamera;
+  const setPreviewCameraRef = useRef(setPreviewCamera);
+  setPreviewCameraRef.current = setPreviewCamera;
+
   // Initialize vMix config and start background status polling (every 3 seconds)
   useEffect(() => {
     let unsubStatus: (() => void) | null = null;
@@ -128,6 +137,38 @@ export const DirectorView: React.FC = () => {
 
       unsubStatus = vmixService.onStatusChange((status) => {
         setVmixStatus(status);
+
+        // State Update: Upon receiving a valid XML status response from vMix,
+        // parse inputs, update the Tally matrix, and switch status immediately
+        if (status.connected && status.activeInput) {
+          const currentConfig = vmixService.getConfig();
+          const mapCameraFromInput = (inputNumber?: string): string | null => {
+            if (!inputNumber) return null;
+            const currentMap = currentConfig.cameraMap || {};
+            for (const [camId, mappedInput] of Object.entries(currentMap)) {
+              if (mappedInput === inputNumber) {
+                return camId;
+              }
+            }
+            const num = parseInt(inputNumber, 10);
+            if (!isNaN(num) && num > 0 && num <= 16) {
+              return `cam${num}`;
+            }
+            return null;
+          };
+
+          const pgmCam = mapCameraFromInput(status.activeInput);
+          const prevCam = mapCameraFromInput(status.previewInput);
+
+          if (pgmCam && pgmCam !== activeProgramCameraRef.current) {
+            console.log(`[DirectorView] vMix Program cut detected (${status.activeInput}) -> Syncing Tally Program to ${pgmCam}`);
+            setProgramCameraRef.current(pgmCam);
+          }
+          if (prevCam && prevCam !== activePreviewCameraRef.current) {
+            console.log(`[DirectorView] vMix Preview change detected (${status.previewInput}) -> Syncing Tally Preview to ${prevCam}`);
+            setPreviewCameraRef.current(prevCam);
+          }
+        }
       });
 
       vmixService.startPolling(3000);
