@@ -202,71 +202,76 @@ app.use((req, res, next) => {
   next();
 });
 
-// Dedicated local API proxy endpoint for vMix (/api/vmix)
-// Accepts GET or POST with host, port, function, input, etc.
-app.all('/api/vmix', async (req, res) => {
-  const params = req.method === 'POST' ? { ...req.query, ...req.body } : req.query;
+// POST /api/vmix-sync
+// Dedicated bidirectional tally synchronization endpoint for local vMix relays (PowerShell/Node.js)
+// Accepts { roomId, active, preview, inputs, version }
+app.post(['/api/vmix-sync', '/vmix-sync'], (req, res) => {
+  const { roomId, active, preview, inputs, version } = req.body || {};
+  const cleanId = normalizeRoomId(roomId);
+  const room = getOrCreateRoom(cleanId);
 
-  const targetHost = (params.host || params.Host || '127.0.0.1').toString().trim();
-  const targetPort = (params.port || params.Port || '8088').toString().trim();
-  const vmixFunction = params.function || params.Function || '';
-  const vmixInput = params.input !== undefined ? params.input : (params.Input !== undefined ? params.Input : '');
-
-  // Build target query string for vMix HTTP API
-  const queryParts = [];
-  if (vmixFunction) {
-    queryParts.push(`Function=${encodeURIComponent(vmixFunction)}`);
-  }
-  if (vmixInput !== '') {
-    queryParts.push(`Input=${encodeURIComponent(vmixInput)}`);
-  }
-
-  // Forward any additional parameters (e.g. Value, Duration, SelectedName)
-  const reservedKeys = new Set(['host', 'Host', 'port', 'Port', 'function', 'Function', 'input', 'Input']);
-  for (const [key, value] of Object.entries(params)) {
-    if (!reservedKeys.has(key) && value !== undefined && value !== null && value !== '') {
-      queryParts.push(`${encodeURIComponent(key)}=${encodeURIComponent(value)}`);
+  // Normalize camera IDs (e.g. numeric "1" -> "cam1", or keep "cam1")
+  const normalizeCam = (val) => {
+    if (!val) return null;
+    const str = val.toString().trim();
+    if (/^\d+$/.test(str)) {
+      return `cam${str}`;
     }
-  }
+    return str.toLowerCase();
+  };
 
-  const queryString = queryParts.length > 0 ? `?${queryParts.join('&')}` : '';
-  const targetUrl = `http://${targetHost}:${targetPort}/api/${queryString}`;
+  const activeCam = normalizeCam(active);
+  const previewCam = normalizeCam(preview);
 
-  console.log(`[vMixProxy] Forwarding ${req.method} -> ${targetUrl}`);
+  // Update room tally state
+  if (activeCam) room.tallyState.activeProgramCamera = activeCam;
+  if (previewCam) room.tallyState.activePreviewCamera = previewCam;
 
-  try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 2500);
+  // 1. Broadcast TALLY_UPDATE to all room participants
+  const tallyMsg = {
+    type: 'TALLY_UPDATE',
+    roomId: cleanId,
+    senderId: 'vmix-sync-relay',
+    senderName: 'vMix Connector',
+    senderRole: 'director',
+    timestamp: Date.now(),
+    payload: {
+      cameraId: activeCam || previewCam || 'cam1',
+      state: activeCam ? 'PROGRAM' : 'PREVIEW',
+      activeProgramCamera: room.tallyState.activeProgramCamera,
+      activePreviewCamera: room.tallyState.activePreviewCamera,
+      senderRole: 'director',
+      directorId: 'vmix-sync-relay',
+    },
+  };
+  broadcastToRoom(cleanId, tallyMsg);
 
-    const vmixRes = await fetch(targetUrl, {
-      method: 'GET',
-      headers: {
-        'Accept': 'text/xml, application/xml, text/plain, */*',
-      },
-      signal: controller.signal,
-    });
+  // 2. Broadcast VMIX_SYNC to all room participants
+  const vmixSyncMsg = {
+    type: 'VMIX_SYNC',
+    roomId: cleanId,
+    senderId: 'vmix-sync-relay',
+    senderName: 'vMix Connector',
+    senderRole: 'director',
+    timestamp: Date.now(),
+    payload: {
+      connected: true,
+      version: version || 'Direct Relay',
+      activeInput: active?.toString() || '',
+      previewInput: preview?.toString() || '',
+      inputs: Array.isArray(inputs) ? inputs : [],
+      lastChecked: Date.now(),
+    },
+  };
+  broadcastToRoom(cleanId, vmixSyncMsg);
 
-    clearTimeout(timeout);
-
-    const bodyText = await vmixRes.text();
-
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Content-Type', vmixRes.headers.get('content-type') || 'text/xml; charset=utf-8');
-    return res.status(vmixRes.status).send(bodyText);
-  } catch (err) {
-    const isTimeout = err.name === 'AbortError';
-    console.warn(`[vMixProxy] Error connecting to vMix at ${targetHost}:${targetPort}: ${err.message}`);
-
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Content-Type', 'application/json');
-    return res.status(isTimeout ? 504 : 502).json({
-      success: false,
-      error: 'VMIX_UNREACHABLE',
-      message: 'vMix not responding on local IP',
-      details: isTimeout ? 'Timeout 3s' : err.message,
-      target: `http://${targetHost}:${targetPort}/api/`,
-    });
-  }
+  return res.status(200).json({
+    success: true,
+    synced: true,
+    roomId: cleanId,
+    activeProgramCamera: room.tallyState.activeProgramCamera,
+    activePreviewCamera: room.tallyState.activePreviewCamera,
+  });
 });
 
 // Health check endpoint for Render, Railway, Kubernetes, or monitoring
@@ -1045,7 +1050,7 @@ server.listen(PORT, HOST, () => {
 Port:               ${PORT}
 Host:               ${HOST}
 Local URL:          http://localhost:${PORT}/
-vMix CORS Proxy:    http://localhost:${PORT}/api/vmix?host=127.0.0.1&port=8088
+vMix Sync Relay:    http://localhost:${PORT}/api/vmix-sync
 Health & Metrics:   http://localhost:${PORT}/health
 Static Dir (dist):  ${fs.existsSync(DIST_DIR) ? 'Active (' + DIST_DIR + ')' : 'Not built yet (run npm run build)'}
 

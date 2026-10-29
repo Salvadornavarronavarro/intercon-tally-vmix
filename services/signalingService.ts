@@ -5,6 +5,7 @@ export type SignalingEventType =
   | 'USER_JOINED'
   | 'USER_LEFT'
   | 'TALLY_UPDATE'
+  | 'VMIX_SYNC'
   | 'MUTE_REMOTE_OPERATOR'
   | 'REMOTE_MUTE_TOGGLE'
   | 'AUDIO_OFFER'

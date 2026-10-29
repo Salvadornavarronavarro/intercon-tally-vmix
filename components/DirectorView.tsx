@@ -24,6 +24,7 @@ import {
   VmixConfig,
   VmixStatus,
 } from '../services/vmixService';
+import { signalingService } from '../services/signalingService';
 import { BrandedTopBar } from './BrandedTopBar';
 import { CrewAuthModal } from './CrewAuthModal';
 import { AudioMixerView } from './AudioMixerView';
@@ -116,6 +117,60 @@ export const DirectorView: React.FC = () => {
     }
   };
 
+  const handleDownloadConnector = () => {
+    let serverOrigin = 'https://intercon-tally-v2-vmix.onrender.com';
+    if (typeof window !== 'undefined' && window.location && window.location.origin) {
+      serverOrigin = window.location.origin;
+    }
+    const cleanRoom = (currentRoomId || 'DEFAULT').trim();
+
+    const batScript = `@echo off
+title vMix Live Tally Connector
+echo ====================================================
+echo  vMix Direct Tally Relay for Intercon Tally V2
+echo  Room ID: ${cleanRoom}
+echo  Target:  ${serverOrigin}
+echo ====================================================
+echo Connecting to local vMix (http://127.0.0.1:8088/api)...
+echo Running automatic PowerShell synchronization loop...
+powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+  "$room = '${cleanRoom}'; $server = '${serverOrigin}/api/vmix-sync'; $vmixUrl = 'http://127.0.0.1:8088/api'; ^
+   Write-Host ('vMix Relay Active! Room: ' + $room); ^
+   $lastActive = ''; $lastPreview = ''; ^
+   while($true) { ^
+     try { ^
+       $res = Invoke-WebRequest -Uri $vmixUrl -TimeoutSec 2 -UseBasicParsing; ^
+       $xml = [xml]$res.Content; ^
+       $act = [string]$xml.vmix.active; ^
+       $prev = [string]$xml.vmix.preview; ^
+       $ver = [string]$xml.vmix.version; ^
+       if ($act -ne $lastActive -or $prev -ne $lastPreview) { ^
+         $lastActive = $act; $lastPreview = $prev; ^
+         Write-Host ('[' + (Get-Date -Format 'HH:mm:ss') + '] vMix Changed -> PGM: ' + $act + ' | PVW: ' + $prev); ^
+         $body = @{ roomId = $room; active = $act; preview = $prev; version = $ver } | ConvertTo-Json; ^
+         Invoke-RestMethod -Uri $server -Method POST -Body $body -ContentType 'application/json' -TimeoutSec 3 | Out-Null; ^
+       } ^
+     } catch { ^
+       Write-Warning ('[' + (Get-Date -Format 'HH:mm:ss') + '] Waiting for vMix at 127.0.0.1:8088...'); ^
+     } ^
+     Start-Sleep -Milliseconds 800; ^
+   }"
+pause
+`;
+
+    if (typeof window !== 'undefined' && typeof document !== 'undefined') {
+      const blob = new Blob([batScript], { type: 'text/plain;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `vmix-connector-${cleanRoom}.bat`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }
+  };
+
   const activeProgramCameraRef = useRef(activeProgramCamera);
   activeProgramCameraRef.current = activeProgramCamera;
   const activePreviewCameraRef = useRef(activePreviewCamera);
@@ -168,6 +223,14 @@ export const DirectorView: React.FC = () => {
             console.log(`[DirectorView] vMix Preview change detected (${status.previewInput}) -> Syncing Tally Preview to ${prevCam}`);
             setPreviewCameraRef.current(prevCam);
           }
+        }
+      });
+
+      // Listen for bidirectional VMIX_SYNC events from local relay via WebSocket
+      const unsubVmixSync = signalingService.on('VMIX_SYNC', (payload: any) => {
+        if (payload) {
+          console.log('[DirectorView] Received VMIX_SYNC from room relay:', payload);
+          vmixService.applySyncData(payload);
         }
       });
 
@@ -1045,7 +1108,9 @@ export const DirectorView: React.FC = () => {
                           ]}
                         >
                           {vmixStatus.connected
-                            ? `ONLINE (${vmixStatus.version ? 'v' + vmixStatus.version : 'READY'})`
+                            ? vmixStatus.version === 'Direct Local Control'
+                              ? 'ONLINE (Direct Local Control Active)'
+                              : `ONLINE (${vmixStatus.version ? 'v' + vmixStatus.version : 'READY'})`
                             : 'OFFLINE'}
                         </Text>
                       </View>
@@ -1208,7 +1273,9 @@ export const DirectorView: React.FC = () => {
 
                   <Text style={styles.vmixBannerMessage}>
                     {vmixStatus.connected
-                      ? `Live vMix state: Program input is ${vmixStatus.activeInput || 'None'} • Preview input is ${vmixStatus.previewInput || 'None'}. Full-duplex tally polling active at http://${vmixConfig.host}:${vmixConfig.port}/api.`
+                      ? vmixStatus.version === 'Direct Local Control'
+                        ? `Direct Local Control is ACTIVE. Blind HTTP commands (CUT, PREVIEW, FADE, AUDIO) execute immediately on vMix without CORS restrictions.`
+                        : `Live vMix state: Program input is ${vmixStatus.activeInput || 'None'} • Preview input is ${vmixStatus.previewInput || 'None'}. Full-duplex tally polling active at http://${vmixConfig.host}:${vmixConfig.port}/api.`
                       : `Cannot reach vMix at http://${vmixConfig.host}:${vmixConfig.port}/api (${vmixStatus.error || 'Connection refused'}). Verify that vMix Web Controller is enabled in vMix Settings > Web Controller.`}
                   </Text>
 
@@ -1221,6 +1288,28 @@ export const DirectorView: React.FC = () => {
                       </Text>
                     </View>
                   </View>
+                </View>
+
+                {/* LAYER B: Standalone Zero-Dependency Local Connector */}
+                <View style={styles.vmixConnectorBox}>
+                  <View style={styles.vmixConnectorTitleRow}>
+                    <Text style={styles.vmixConnectorIcon}>⚡</Text>
+                    <Text style={styles.vmixConnectorTitle}>
+                      CONECTOR BIDIRECCIONAL AUTOMÁTICO vMIX (WINDOWS/MAC)
+                    </Text>
+                  </View>
+                  <Text style={styles.vmixConnectorDesc}>
+                    Para sincronización total bidireccional de estados Tally y nombres de cámaras sin bloqueos CORS del navegador: descarga y ejecuta este conector ligero preconfigurado con tu Sala actual ({currentRoomId || 'DEFAULT'}).
+                  </Text>
+                  <TouchableOpacity
+                    style={styles.vmixConnectorBtn}
+                    onPress={handleDownloadConnector}
+                    activeOpacity={0.85}
+                  >
+                    <Text style={styles.vmixConnectorBtnText}>
+                      ⚡ Descargar Conector Automático vMix (Windows/Mac)
+                    </Text>
+                  </TouchableOpacity>
                 </View>
               </View>
             </View>
@@ -2183,6 +2272,52 @@ const styles = StyleSheet.create({
     fontSize: 9.5,
     fontWeight: '800',
     letterSpacing: 0.4,
+  },
+  vmixConnectorBox: {
+    backgroundColor: '#111827',
+    padding: 14,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#374151',
+    gap: 8,
+    marginTop: 10,
+  },
+  vmixConnectorTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  vmixConnectorIcon: {
+    fontSize: 14,
+    color: '#F59E0B',
+  },
+  vmixConnectorTitle: {
+    color: '#F9FAFB',
+    fontSize: 12,
+    fontWeight: '800',
+    letterSpacing: 0.5,
+  },
+  vmixConnectorDesc: {
+    color: '#9CA3AF',
+    fontSize: 11,
+    lineHeight: 16,
+  },
+  vmixConnectorBtn: {
+    backgroundColor: '#2563EB',
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    borderRadius: 6,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    marginTop: 4,
+  },
+  vmixConnectorBtnText: {
+    color: '#FFFFFF',
+    fontSize: 11.5,
+    fontWeight: '800',
+    letterSpacing: 0.5,
   },
   // Tile buttons & vMix badges
   tileVmixBadge: {

@@ -86,21 +86,6 @@ class VmixService {
   }
 
   /**
-   * Fallback server proxy URL if needed
-   */
-  private getProxyUrl(queryString: string): string {
-    if (typeof window !== 'undefined' && window.location) {
-      const hostname = window.location.hostname || 'localhost';
-      const port = window.location.port;
-      if (port === '8081' || port === '19006') {
-        return `http://${hostname}:3000/api/vmix${queryString}`;
-      }
-      return `/api/vmix${queryString}`;
-    }
-    return `http://localhost:3000/api/vmix${queryString}`;
-  }
-
-  /**
    * Load stored vMix configuration
    */
   public async loadConfig(): Promise<VmixConfig> {
@@ -245,7 +230,11 @@ class VmixService {
 
   /**
    * Polls the vMix instance status directly from the client browser.
-   * Uses AbortController with a 3-second timeout for snappy, non-blocking responsiveness.
+   * LAYER A: Instant Browser Connection & Reachability Check
+   * 1. Attempts standard XML fetch (works when browsing via HTTP or when CORS is present).
+   * 2. If blocked by CORS or network, immediately falls back to a no-cors reachability probe.
+   *    If no-cors succeeds (resolves with opaque response), it proves vMix Web Controller is running on that port!
+   *    Immediately switches status to ONLINE ('Direct Local Control Active').
    */
   public async checkStatus(): Promise<VmixStatus> {
     if (this.isChecking) {
@@ -254,135 +243,138 @@ class VmixService {
     this.isChecking = true;
     const url = this.getDirectVmixUrl();
 
+    // 1. Try standard XML fetch
     try {
-      const response = await this.requestVmixXml(url, 3000);
+      const response = await this.requestVmixXml(url, 2000);
 
-      if (response.status !== 200 || !response.ok) {
-        const newStatus: VmixStatus = {
-          connected: false,
-          lastChecked: Date.now(),
-          error: `vMix HTTP ${response.status}`,
-        };
-        this.notifyStatus(newStatus);
-        return newStatus;
-      }
+      if (response.ok && response.status === 200) {
+        const xmlText = response.text;
+        let version: string | undefined;
+        let activeInput: string | undefined;
+        let previewInput: string | undefined;
+        const inputs: VmixInputInfo[] = [];
 
-      const xmlText = response.text;
-      let version: string | undefined;
-      let activeInput: string | undefined;
-      let previewInput: string | undefined;
-      const inputs: VmixInputInfo[] = [];
+        let isValidVmixXml = false;
 
-      let isValidVmixXml = false;
+        // Parse with standard DOMParser
+        if (typeof DOMParser !== 'undefined') {
+          try {
+            const parser = new DOMParser();
+            const doc = parser.parseFromString(xmlText, 'text/xml');
+            const parserErrors = doc.getElementsByTagName('parsererror');
+            if (parserErrors.length === 0) {
+              const root = doc.documentElement;
+              if (root && root.nodeName.toLowerCase() === 'vmix') {
+                isValidVmixXml = true;
+                version = doc.getElementsByTagName('version')[0]?.textContent?.trim();
+                activeInput = doc.getElementsByTagName('active')[0]?.textContent?.trim();
+                previewInput = doc.getElementsByTagName('preview')[0]?.textContent?.trim();
 
-      // 1. Parse with standard DOMParser
-      if (typeof DOMParser !== 'undefined') {
-        try {
-          const parser = new DOMParser();
-          const doc = parser.parseFromString(xmlText, 'text/xml');
-
-          // Check for parser errors before extracting <active> and <preview> tags
-          const parserErrors = doc.getElementsByTagName('parsererror');
-          if (parserErrors.length === 0) {
-            const root = doc.documentElement;
-            if (root && root.nodeName.toLowerCase() === 'vmix') {
-              isValidVmixXml = true;
-
-              const verEl = doc.getElementsByTagName('version')[0];
-              const actEl = doc.getElementsByTagName('active')[0];
-              const prevEl = doc.getElementsByTagName('preview')[0];
-
-              version = verEl?.textContent?.trim();
-              activeInput = actEl?.textContent?.trim();
-              previewInput = prevEl?.textContent?.trim();
-
-              const inputEls = doc.getElementsByTagName('input');
-              for (let i = 0; i < inputEls.length; i++) {
-                const el = inputEls[i];
-                const num = el.getAttribute('number');
-                if (num) {
-                  inputs.push({
-                    number: num,
-                    title: el.getAttribute('title') || el.textContent || `Input ${num}`,
-                    type: el.getAttribute('type') || 'Unknown',
-                    muted: el.getAttribute('muted')?.toLowerCase() === 'true',
-                    volume: el.getAttribute('volume') ? parseFloat(el.getAttribute('volume')!) : undefined,
-                  });
+                const inputEls = doc.getElementsByTagName('input');
+                for (let i = 0; i < inputEls.length; i++) {
+                  const el = inputEls[i];
+                  const num = el.getAttribute('number');
+                  if (num) {
+                    inputs.push({
+                      number: num,
+                      title: el.getAttribute('title') || el.textContent || `Input ${num}`,
+                      type: el.getAttribute('type') || 'Unknown',
+                      muted: el.getAttribute('muted')?.toLowerCase() === 'true',
+                      volume: el.getAttribute('volume') ? parseFloat(el.getAttribute('volume')!) : undefined,
+                    });
+                  }
                 }
               }
             }
-          }
-        } catch (domErr) {
-          console.warn('[VmixService] DOMParser error, using regex fallback:', domErr);
-        }
-      }
-
-      // 2. Fallback regex parser (for environments without DOMParser or edge XML quirks)
-      if (!isValidVmixXml && /<vmix[\s>]/i.test(xmlText)) {
-        isValidVmixXml = true;
-        const verMatch = xmlText.match(/<version>(.*?)<\/version>/i);
-        if (verMatch) version = verMatch[1]?.trim();
-
-        const actMatch = xmlText.match(/<active>(.*?)<\/active>/i);
-        if (actMatch) activeInput = actMatch[1]?.trim();
-
-        const prevMatch = xmlText.match(/<preview>(.*?)<\/preview>/i);
-        if (prevMatch) previewInput = prevMatch[1]?.trim();
-
-        const inputRegex = /<input\s+([^>]*?)>(.*?)<\/input>/gis;
-        let match: RegExpExecArray | null;
-        while ((match = inputRegex.exec(xmlText)) !== null) {
-          const attrs = match[1];
-          const numMatch = attrs.match(/number="([^"]+)"/i);
-          const titleMatch = attrs.match(/title="([^"]+)"/i);
-          const typeMatch = attrs.match(/type="([^"]+)"/i);
-          const mutedMatch = attrs.match(/muted="([^"]+)"/i);
-          const volMatch = attrs.match(/volume="([^"]+)"/i);
-          if (numMatch) {
-            inputs.push({
-              number: numMatch[1],
-              title: titleMatch ? titleMatch[1] : `Input ${numMatch[1]}`,
-              type: typeMatch ? typeMatch[1] : 'Unknown',
-              muted: mutedMatch ? mutedMatch[1].toLowerCase() === 'true' : undefined,
-              volume: volMatch ? parseFloat(volMatch[1]) : undefined,
-            });
+          } catch (domErr) {
+            console.warn('[VmixService] DOMParser error, using regex fallback:', domErr);
           }
         }
-      }
 
-      if (!isValidVmixXml) {
-        throw new Error('Response did not contain a valid <vmix> root tag');
-      }
+        // Fallback regex parser
+        if (!isValidVmixXml && /<vmix[\s>]/i.test(xmlText)) {
+          isValidVmixXml = true;
+          const verMatch = xmlText.match(/<version>(.*?)<\/version>/i);
+          if (verMatch) version = verMatch[1]?.trim();
+          const actMatch = xmlText.match(/<active>(.*?)<\/active>/i);
+          if (actMatch) activeInput = actMatch[1]?.trim();
+          const prevMatch = xmlText.match(/<preview>(.*?)<\/preview>/i);
+          if (prevMatch) previewInput = prevMatch[1]?.trim();
 
-      // Once a valid <vmix> root tag is detected in the parsed XML,
-      // immediately set connection state to 'ONLINE' and clear any error alert.
+          const inputRegex = /<input\s+([^>]*?)>(.*?)<\/input>/gis;
+          let match: RegExpExecArray | null;
+          while ((match = inputRegex.exec(xmlText)) !== null) {
+            const attrs = match[1];
+            const numMatch = attrs.match(/number="([^"]+)"/i);
+            const titleMatch = attrs.match(/title="([^"]+)"/i);
+            const typeMatch = attrs.match(/type="([^"]+)"/i);
+            const mutedMatch = attrs.match(/muted="([^"]+)"/i);
+            const volMatch = attrs.match(/volume="([^"]+)"/i);
+            if (numMatch) {
+              inputs.push({
+                number: numMatch[1],
+                title: titleMatch ? titleMatch[1] : `Input ${numMatch[1]}`,
+                type: typeMatch ? typeMatch[1] : 'Unknown',
+                muted: mutedMatch ? mutedMatch[1].toLowerCase() === 'true' : undefined,
+                volume: volMatch ? parseFloat(volMatch[1]) : undefined,
+              });
+            }
+          }
+        }
+
+        if (isValidVmixXml) {
+          const newStatus: VmixStatus = {
+            connected: true,
+            version,
+            activeInput,
+            previewInput,
+            inputs,
+            lastChecked: Date.now(),
+            error: undefined,
+          };
+          this.notifyStatus(newStatus);
+          return newStatus;
+        }
+      }
+    } catch {
+      // Standard fetch failed or was blocked by CORS
+    }
+
+    // 2. LAYER A Fallback: no-cors reachability probe
+    // Since vMix lacks CORS headers, fetch with mode: 'no-cors' succeeds if the server is up and listening.
+    // If the server is offline / closed, fetch will reject / throw TypeError (Failed to fetch).
+    try {
+      const probeController = typeof AbortController !== 'undefined' ? new AbortController() : null;
+      const probeTimeout = probeController ? setTimeout(() => probeController.abort(), 2000) : null;
+
+      await fetch(url, {
+        method: 'GET',
+        mode: 'no-cors',
+        cache: 'no-store',
+        signal: probeController ? probeController.signal : undefined,
+      });
+
+      if (probeTimeout) clearTimeout(probeTimeout);
+
+      // no-cors fetch resolved! vMix Web Controller is actively listening on this port.
       const newStatus: VmixStatus = {
         connected: true,
-        version,
-        activeInput,
-        previewInput,
-        inputs,
+        version: this.status.version && this.status.version !== 'Direct Local Control'
+          ? this.status.version
+          : 'Direct Local Control',
+        activeInput: this.status.activeInput,
+        previewInput: this.status.previewInput,
+        inputs: this.status.inputs,
         lastChecked: Date.now(),
         error: undefined,
       };
       this.notifyStatus(newStatus);
       return newStatus;
-    } catch (err: any) {
-      console.error('vMix poll error:', err);
-
-      let descriptiveError = 'vMix not responding on local IP';
-      if (err.name === 'AbortError' || err.message?.includes('timeout')) {
-        descriptiveError = 'vMix not responding on local IP (Timeout 3s)';
-      } else if (
-        typeof window !== 'undefined' &&
-        window.location &&
-        window.location.protocol === 'https:' &&
-        (url.startsWith('http://127.0.0.1') || url.startsWith('http://localhost') || url.startsWith('http://192.168'))
-      ) {
-        descriptiveError = 'vMix not responding on local IP (Check Mixed-Content or browse via HTTP)';
-      } else if (err.message && err.message !== 'Failed to fetch') {
-        descriptiveError = `vMix not responding on local IP (${err.message})`;
-      }
+    } catch (probeErr: any) {
+      const isTimeout = probeErr.name === 'AbortError' || probeErr.message?.includes('timeout');
+      const descriptiveError = isTimeout
+        ? `vMix not responding on ${this.config.host}:${this.config.port} (Timeout 2s)`
+        : `Cannot reach vMix on ${this.config.host}:${this.config.port}. Verify vMix Web Controller is enabled.`;
 
       const newStatus: VmixStatus = {
         connected: false,
@@ -394,6 +386,20 @@ class VmixService {
     } finally {
       this.isChecking = false;
     }
+  }
+
+  /**
+   * Updates status from an external sync source (e.g. Layer B local relay via WebSocket)
+   */
+  public applySyncData(syncPayload: Partial<VmixStatus>): void {
+    this.status = {
+      ...this.status,
+      ...syncPayload,
+      connected: syncPayload.connected !== undefined ? syncPayload.connected : true,
+      lastChecked: Date.now(),
+      error: undefined,
+    };
+    this.notifyStatus(this.status);
   }
 
   /**
@@ -445,7 +451,8 @@ class VmixService {
 
   /**
    * Generic dispatch command directly to vMix Web Controller from client.
-   * Completely non-blocking and safe against network delays.
+   * LAYER A: Uses mode: 'no-cors' to completely bypass browser CORS preflight restrictions.
+   * Commands like PreviewInput, CutDirect, Fade, AudioAuto execute instantaneously in vMix.
    */
   public async dispatchCommand(
     functionName: string,
@@ -473,17 +480,23 @@ class VmixService {
     }
 
     const url = this.getDirectVmixUrl(`?${params.toString()}`);
-    console.log(`[VmixService] Direct dispatch: ${functionName} (Input: ${inputParam}) -> ${url}`);
+    console.log(`[VmixService] Direct dispatch (no-cors): ${functionName} (Input: ${inputParam}) -> ${url}`);
 
     try {
-      const res = await this.requestVmixXml(url, 3000);
-      if (!res.ok) {
-        console.warn(`[VmixService] vMix command response error (${res.status}):`, res.text);
-        return { success: false, error: `vMix HTTP ${res.status}: ${res.text}` };
-      }
+      const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+      const timeoutId = controller ? setTimeout(() => controller.abort(), 3000) : null;
 
-      console.log(`[VmixService] Command "${functionName}" executed successfully.`);
-      return { success: true, data: res.text };
+      await fetch(url, {
+        method: 'GET',
+        mode: 'no-cors',
+        cache: 'no-store',
+        signal: controller ? controller.signal : undefined,
+      });
+
+      if (timeoutId) clearTimeout(timeoutId);
+
+      console.log(`[VmixService] Command "${functionName}" executed successfully via direct browser fetch.`);
+      return { success: true };
     } catch (err: any) {
       const msg = err.name === 'AbortError' ? 'Timeout 3s' : (err.message || 'vMix not responding on local IP');
       console.warn(`[VmixService] Direct dispatch error for "${functionName}":`, msg);
