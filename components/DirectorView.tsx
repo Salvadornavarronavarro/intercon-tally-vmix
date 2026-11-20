@@ -324,10 +324,12 @@ export const DirectorView: React.FC = () => {
       setVoiceError(null);
       const success = await voiceCommandService.startListening(currentUser?.role, {
         onCommand: (command) => {
-          if (command.type === 'PREVIEW') {
+          if (command.type === 'PREVIEW' && command.cameraId) {
             triggerPreview(command.cameraId);
-          } else if (command.type === 'PROGRAM') {
+          } else if (command.type === 'PROGRAM' && command.cameraId) {
             triggerProgram(command.cameraId);
+          } else if (command.type === 'FADE') {
+            triggerFade(command.cameraId);
           }
           setLastCommand(command);
           setInterimSpeech('');
@@ -355,10 +357,12 @@ export const DirectorView: React.FC = () => {
   const handleTestVoiceCommand = (phrase: string) => {
     const cmd = parseVoiceCommand(phrase);
     if (cmd) {
-      if (cmd.type === 'PREVIEW') {
+      if (cmd.type === 'PREVIEW' && cmd.cameraId) {
         triggerPreview(cmd.cameraId);
-      } else if (cmd.type === 'PROGRAM') {
+      } else if (cmd.type === 'PROGRAM' && cmd.cameraId) {
         triggerProgram(cmd.cameraId);
+      } else if (cmd.type === 'FADE') {
+        triggerFade(cmd.cameraId);
       }
       setLastCommand(cmd);
       setInterimSpeech('');
@@ -494,6 +498,56 @@ export const DirectorView: React.FC = () => {
     vmixService.sendFade(500).catch((err) => {
       console.warn('[DirectorView] Non-blocking vMix sendFade notice:', err);
     });
+  };
+
+  /**
+   * Broadcast Voice / Program FADE Action:
+   * - If targetCamId is provided (e.g. "fundido cámara X", "fundido a cámara X"):
+   *   If camera X is not already in PROGRAM:
+   *   1. Put camera X into PREVIEW (PreviewInput with Input=X) in vMix
+   *   2. Trigger Fade (Duration=500) via sequential HTTP bridge queue
+   *   3. Update local UI states with broadcast flip-flop swap:
+   *      camera X moves to PROGRAM (red), previous PROGRAM drops to PREVIEW (green)
+   * - If targetCamId is omitted (standalone "fundido" or "hacer fundido"):
+   *   Fades current PREVIEW to PROGRAM and drops previous PROGRAM to PREVIEW via handleFade()
+   */
+  const triggerFade = (targetCamId?: string) => {
+    const currentPgm = activeProgramCameraRef.current || activeProgramCamera || 'cam1';
+    const currentPvw = activePreviewCameraRef.current || activePreviewCamera;
+
+    if (targetCamId) {
+      if (currentPgm === targetCamId) {
+        console.log(`[DirectorView] Camera ${targetCamId} is already in PROGRAM; ignoring fundido.`);
+        return;
+      }
+
+      // If camera X is already in Preview, just trigger the standard broadcast fade swap
+      if (currentPvw === targetCamId) {
+        handleFade();
+        return;
+      }
+
+      console.log(`[DirectorView] Voice Fundido to ${targetCamId}: Staging Preview -> ${targetCamId}, Fading to Program, Outgoing -> Preview (${currentPgm})`);
+
+      // 1. First put camera X into PREVIEW in vMix via sequential queue
+      vmixService.sendPreview(targetCamId).catch((err) => {
+        console.warn('[DirectorView] Non-blocking vMix sendPreview notice:', err);
+      });
+
+      // 2. Trigger Fade (Duration=500) via sequential queue
+      vmixService.sendFade(500).catch((err) => {
+        console.warn('[DirectorView] Non-blocking vMix sendFade notice:', err);
+      });
+
+      // 3. Update local UI states with broadcast flip-flop swap
+      const newProgram = targetCamId;
+      const newPreview = currentPgm;
+      setProgramCamera(newProgram);
+      setPreviewCamera(newPreview);
+    } else {
+      // Standalone "fundido": fade whatever is currently in PREVIEW to PROGRAM
+      handleFade();
+    }
   };
 
   /**
@@ -1046,13 +1100,21 @@ export const DirectorView: React.FC = () => {
                         styles.commandBadge,
                         lastCommand.type === 'PROGRAM'
                           ? styles.commandBadgeProgram
+                          : lastCommand.type === 'FADE'
+                          ? styles.commandBadgeProgram
                           : styles.commandBadgePreview,
                       ]}
                     >
                       <Text style={styles.commandBadgeText}>
                         Recognized: "{lastCommand.rawPhrase}" →{' '}
-                        {lastCommand.type === 'PROGRAM' ? 'LIVE / ON AIR' : 'PREVIEW / STANDBY'}{' '}
-                        ({CAMERA_LABELS[lastCommand.cameraId] || lastCommand.cameraId.toUpperCase()})
+                        {lastCommand.type === 'PROGRAM'
+                          ? 'LIVE / ON AIR'
+                          : lastCommand.type === 'FADE'
+                          ? 'FUNDIDO / FADE'
+                          : 'PREVIEW / STANDBY'}{' '}
+                        {lastCommand.cameraId
+                          ? `(${CAMERA_LABELS[lastCommand.cameraId] || lastCommand.cameraId.toUpperCase()})`
+                          : '(PREVIEW ➔ PROGRAM)'}
                       </Text>
                     </View>
                   </View>

@@ -307,6 +307,10 @@ export const AudioMixerView: React.FC<AudioMixerViewProps> = ({
     setChannels((prev) =>
       prev.map((ch) => (ch.id === camId ? { ...ch, muted: !ch.muted } : ch))
     );
+    // Dispatch Function=Audio&Input=[Mapped_Input] to vMix via sequential HTTP bridge queue
+    vmixService.toggleChannelAudio(camId).catch((err) => {
+      console.warn(`[AudioMixerView] toggleChannelAudio(${camId}) error:`, err);
+    });
     if (onToggleCameraMute) {
       onToggleCameraMute(camId);
     }
@@ -333,26 +337,41 @@ export const AudioMixerView: React.FC<AudioMixerViewProps> = ({
     );
   }, []);
 
+  const lastVmixChannelSentRef = useRef<Record<string, number>>({});
+  const sendVmixChannelVolumeThrottled = useCallback((camId: string, val: number, force: boolean = false) => {
+    const now = Date.now();
+    const lastSent = lastVmixChannelSentRef.current[camId] || 0;
+    if (force || now - lastSent > 80) {
+      lastVmixChannelSentRef.current[camId] = now;
+      vmixService.setChannelVolume(camId, val * 100).catch((err) => {
+        console.warn(`[AudioMixerView] setChannelVolume(${camId}) error:`, err);
+      });
+    }
+  }, []);
+
   const handleSetVolume = useCallback((camId: string, newVol: number) => {
     const clamped = Math.max(0, Math.min(1, newVol));
     setChannels((prev) =>
       prev.map((ch) => (ch.id === camId ? { ...ch, volume: clamped } : ch))
     );
-  }, []);
+    sendVmixChannelVolumeThrottled(camId, clamped);
+  }, [sendVmixChannelVolumeThrottled]);
 
   const handleSetVolumeA = useCallback((camId: string, newVol: number) => {
     const clamped = Math.max(0, Math.min(1, newVol));
     setChannels((prev) =>
       prev.map((ch) => (ch.id === camId ? { ...ch, volumeA: clamped } : ch))
     );
-  }, []);
+    sendVmixChannelVolumeThrottled(camId, clamped);
+  }, [sendVmixChannelVolumeThrottled]);
 
   const handleSetVolumeB = useCallback((camId: string, newVol: number) => {
     const clamped = Math.max(0, Math.min(1, newVol));
     setChannels((prev) =>
       prev.map((ch) => (ch.id === camId ? { ...ch, volumeB: clamped } : ch))
     );
-  }, []);
+    sendVmixChannelVolumeThrottled(camId, clamped);
+  }, [sendVmixChannelVolumeThrottled]);
 
   const handleSetPan = useCallback((camId: string, newPan: number) => {
     const clamped = Math.max(-100, Math.min(100, newPan));
@@ -505,6 +524,9 @@ export const AudioMixerView: React.FC<AudioMixerViewProps> = ({
 
       const handleWindowPointerMove = (ev: MouseEvent | PointerEvent | TouchEvent) => {
         if (draggingTargetRef.current?.type === 'fader' && draggingTargetRef.current.id === targetId) {
+          if (ev.cancelable && typeof ev.preventDefault === 'function') {
+            try { ev.preventDefault(); } catch {}
+          }
           const moveY =
             (ev as MouseEvent).clientY ??
             (ev as TouchEvent).touches?.[0]?.clientY ??
@@ -519,6 +541,9 @@ export const AudioMixerView: React.FC<AudioMixerViewProps> = ({
         draggingTargetRef.current = null;
         if (targetId === 'master' || targetId === 'master_L' || targetId === 'master_R') {
           sendVmixMasterThrottled(currentDragRatio, true);
+        } else {
+          const rawCamId = targetId.replace(/_[AB]$/, '');
+          sendVmixChannelVolumeThrottled(rawCamId, currentDragRatio, true);
         }
         if (captureTarget && pointerId !== undefined && typeof captureTarget.releasePointerCapture === 'function') {
           try {
@@ -544,7 +569,7 @@ export const AudioMixerView: React.FC<AudioMixerViewProps> = ({
       window.addEventListener('pointercancel', handleWindowPointerUp as any);
       window.addEventListener('mousemove', handleWindowPointerMove as any);
       window.addEventListener('mouseup', handleWindowPointerUp as any);
-      window.addEventListener('touchmove', handleWindowPointerMove as any, { passive: true });
+      window.addEventListener('touchmove', handleWindowPointerMove as any, { passive: false });
       window.addEventListener('touchend', handleWindowPointerUp as any);
       window.addEventListener('touchcancel', handleWindowPointerUp as any);
       window.addEventListener('blur', handleWindowPointerUp as any);
@@ -882,6 +907,8 @@ export const AudioMixerView: React.FC<AudioMixerViewProps> = ({
                       style={styles.faderTrackContainer}
                       // @ts-ignore
                       onPointerDown={(e: any) => handleFaderPointerDown(e, ch.id)}
+                      // @ts-ignore
+                      onTouchStart={(e: any) => handleFaderPointerDown(e, ch.id)}
                     >
                       <View style={styles.faderSlotTrack}>
                         <View style={styles.faderUnityNotch} />
@@ -927,6 +954,8 @@ export const AudioMixerView: React.FC<AudioMixerViewProps> = ({
                           style={styles.splitFaderContainer}
                           // @ts-ignore
                           onPointerDown={(e: any) => handleFaderPointerDown(e, ch.id + '_A')}
+                          // @ts-ignore
+                          onTouchStart={(e: any) => handleFaderPointerDown(e, ch.id + '_A')}
                         >
                           <View style={styles.splitSlotTrack}>
                             <View style={styles.faderUnityNotch} />
@@ -962,6 +991,8 @@ export const AudioMixerView: React.FC<AudioMixerViewProps> = ({
                           style={styles.splitFaderContainer}
                           // @ts-ignore
                           onPointerDown={(e: any) => handleFaderPointerDown(e, ch.id + '_B')}
+                          // @ts-ignore
+                          onTouchStart={(e: any) => handleFaderPointerDown(e, ch.id + '_B')}
                         >
                           <View style={styles.splitSlotTrack}>
                             <View style={styles.faderUnityNotch} />
@@ -1090,6 +1121,8 @@ export const AudioMixerView: React.FC<AudioMixerViewProps> = ({
                   style={styles.masterDualFadersColumn}
                   // @ts-ignore: React Native Web pointer event
                   onPointerDown={(e: any) => handleFaderPointerDown(e, 'master')}
+                  // @ts-ignore
+                  onTouchStart={(e: any) => handleFaderPointerDown(e, 'master')}
                 >
                   <View style={styles.faderTrackContainer}>
                     {/* Dual Track Slots for L & R */}
@@ -1154,6 +1187,8 @@ export const AudioMixerView: React.FC<AudioMixerViewProps> = ({
                       style={styles.masterSplitTrackContainer}
                       // @ts-ignore: React Native Web pointer event
                       onPointerDown={(e: any) => handleFaderPointerDown(e, 'master_L')}
+                      // @ts-ignore
+                      onTouchStart={(e: any) => handleFaderPointerDown(e, 'master_L')}
                     >
                       <View style={styles.faderSlotTrack}>
                         <View style={styles.faderUnityNotch} />
@@ -1182,6 +1217,8 @@ export const AudioMixerView: React.FC<AudioMixerViewProps> = ({
                       style={styles.masterSplitTrackContainer}
                       // @ts-ignore: React Native Web pointer event
                       onPointerDown={(e: any) => handleFaderPointerDown(e, 'master_R')}
+                      // @ts-ignore
+                      onTouchStart={(e: any) => handleFaderPointerDown(e, 'master_R')}
                     >
                       <View style={styles.faderSlotTrack}>
                         <View style={styles.faderUnityNotch} />
@@ -1361,7 +1398,7 @@ export const AudioMixerView: React.FC<AudioMixerViewProps> = ({
   );
 };
 
-const styles = StyleSheet.create({
+const styles = StyleSheet.create<any>({
   consoleContainer: {
     flex: 1,
     height: '100%',
@@ -1850,6 +1887,8 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     minWidth: 24,
     cursor: 'pointer' as any,
+    touchAction: 'none' as any,
+    userSelect: 'none' as any,
   },
   faderSlotTrack: {
     width: 5,
@@ -1882,6 +1921,7 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     paddingVertical: 3,
+    pointerEvents: 'none' as any,
     // @ts-ignore web shadow
     boxShadow: '0 5px 12px rgba(0,0,0,0.9), inset 0 1px 1px rgba(255,255,255,0.8), inset 0 -1px 2px rgba(0,0,0,0.5)',
   },
@@ -1954,6 +1994,8 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     minWidth: 16,
     cursor: 'pointer' as any,
+    touchAction: 'none' as any,
+    userSelect: 'none' as any,
   },
   splitSlotTrack: {
     width: 4,
@@ -1974,6 +2016,7 @@ const styles = StyleSheet.create({
     borderColor: '#D8D8E2',
     justifyContent: 'center',
     alignItems: 'center',
+    pointerEvents: 'none' as any,
     // @ts-ignore web shadow
     boxShadow: '0 4px 10px rgba(0,0,0,0.85), inset 0 1px 1px rgba(255,255,255,0.7)',
   },
@@ -2212,6 +2255,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     cursor: 'pointer' as any,
+    touchAction: 'none' as any,
+    userSelect: 'none' as any,
   },
   masterDualTrackSlot: {
     flexDirection: 'row',
@@ -2230,6 +2275,7 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     paddingVertical: 4,
+    pointerEvents: 'none' as any,
     // @ts-ignore web shadow
     boxShadow: '0 5px 14px rgba(255, 23, 68, 0.6), inset 0 1px 1px rgba(255,255,255,0.6)',
   },
@@ -2271,6 +2317,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     cursor: 'pointer' as any,
+    touchAction: 'none' as any,
+    userSelect: 'none' as any,
   },
   masterSplitFaderCap: {
     position: 'absolute',
@@ -2283,6 +2331,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     paddingVertical: 2,
+    pointerEvents: 'none' as any,
     // @ts-ignore web shadow
     boxShadow: '0 4px 10px rgba(255, 23, 68, 0.6), inset 0 1px 1px rgba(255,255,255,0.6)',
   },

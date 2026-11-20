@@ -964,6 +964,39 @@ class VmixService {
   }
 
   /**
+   * Set Channel Audio Volume in vMix:
+   * Function=SetVolume&Input=[Mapped_Input]&Value=[0-100]
+   */
+  public async setChannelVolume(cameraId: string, percentage: number): Promise<boolean> {
+    try {
+      const defaultIndex = cameraId.replace(/\D/g, '') || '1';
+      const mappedInput = this.config.cameraMap[cameraId] || defaultIndex;
+      const clamped = Math.max(0, Math.min(100, Math.round(percentage)));
+      const result = await this.dispatchCommand('SetVolume', mappedInput, { Value: clamped.toString() });
+      return result.success;
+    } catch (err: any) {
+      console.warn(`[VmixService] setChannelVolume(${cameraId}, ${percentage}) caught error:`, err.message);
+      return false;
+    }
+  }
+
+  /**
+   * Toggle Channel Audio Mute in vMix:
+   * Function=Audio&Input=[Mapped_Input]
+   */
+  public async toggleChannelAudio(cameraId: string): Promise<boolean> {
+    try {
+      const defaultIndex = cameraId.replace(/\D/g, '') || '1';
+      const mappedInput = this.config.cameraMap[cameraId] || defaultIndex;
+      const result = await this.dispatchCommand('Audio', mappedInput);
+      return result.success;
+    } catch (err: any) {
+      console.warn(`[VmixService] toggleChannelAudio(${cameraId}) caught error:`, err.message);
+      return false;
+    }
+  }
+
+  /**
    * Set Audio Auto (Audio-Follows-Video / AFV) for a specific camera in vMix.
    * afvEnabled = false -> Function=AudioAutoOff (Audio Fijo / unlinked from video switching)
    * afvEnabled = true  -> Function=AudioAutoOn  (Audio automatically follows camera switching)

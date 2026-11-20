@@ -2,9 +2,9 @@ import { Platform } from 'react-native';
 import { UserRole } from '../context/IntercomContext';
 
 export interface ParsedVoiceCommand {
-  type: 'PREVIEW' | 'PROGRAM';
-  cameraId: string; // e.g. 'cam1'
-  cameraNumber: number; // 1 to 8
+  type: 'PREVIEW' | 'PROGRAM' | 'FADE';
+  cameraId?: string; // e.g. 'cam1' (optional for standalone FADE)
+  cameraNumber?: number; // 1 to 8
   triggerWord: string;
   rawPhrase: string;
 }
@@ -75,10 +75,44 @@ export function parseVoiceCommand(rawText: string): ParsedVoiceCommand | null {
 
   const normalized = normalizeTranscript(rawText.trim());
 
-  // 1. PREVIEW TRIGGERS (Strict regex matching)
-  // Prefix: e.g. "preparado cámara 1", "prepara cam dos", "previo 3", "preview cam 4"
+  // 1. FADE TRIGGERS WITH CAMERA NUMBER (e.g. "fundido cámara 1", "fundido a cámara 2", "hacer fundido cámara 3", "haz fundido a cámara 4")
+  const fadeMatch1 = normalized.match(
+    /\b(?:hacer\s+|haz\s+)?(fundido|fundir|disoluci[óo]n|fade)\s*(?:a\s+)?(?:de\s+)?(?:la\s+)?(?:c[áa]mara|camera|cam)?\s*([1-8])\b/i
+  );
+  if (fadeMatch1 && fadeMatch1[2]) {
+    const num = parseInt(fadeMatch1[2], 10);
+    if (num >= 1 && num <= 8) {
+      return {
+        type: 'FADE',
+        cameraId: `cam${num}`,
+        cameraNumber: num,
+        triggerWord: fadeMatch1[1].toLowerCase(),
+        rawPhrase: fadeMatch1[0].trim(),
+      };
+    }
+  }
+
+  // Suffix: e.g. "cámara 2 fundido", "cam 3 a fundido", "camera 4 fade"
+  const fadeMatch2 = normalized.match(
+    /\b(?:c[áa]mara|camera|cam)\s*([1-8])\s*(?:a\s+)?(fundido|fundir|disoluci[óo]n|fade)\b/i
+  );
+  if (fadeMatch2 && fadeMatch2[1]) {
+    const num = parseInt(fadeMatch2[1], 10);
+    if (num >= 1 && num <= 8) {
+      return {
+        type: 'FADE',
+        cameraId: `cam${num}`,
+        cameraNumber: num,
+        triggerWord: fadeMatch2[2].toLowerCase(),
+        rawPhrase: fadeMatch2[0].trim(),
+      };
+    }
+  }
+
+  // 2. PREVIEW TRIGGERS (Strict regex matching: preparado, prevenido, previo, preview...)
+  // Prefix: e.g. "preparado cámara 1", "prevenido cámara 2", "prepara cam dos", "previo 3", "preview cam 4"
   const previewMatch1 = normalized.match(
-    /\b(preparad[oa]|prepara|previo|preview|standby|ready)\s*(?:a\s+)?(?:la\s+)?(?:c[áa]mara|camera|cam)?\s*([1-8])\b/i
+    /\b(preparad[oa]|prepara|prevenid[oa]|previene|previo|preview|standby|ready)\s*(?:a\s+)?(?:la\s+)?(?:c[áa]mara|camera|cam)?\s*([1-8])\b/i
   );
   if (previewMatch1 && previewMatch1[2]) {
     const num = parseInt(previewMatch1[2], 10);
@@ -93,9 +127,9 @@ export function parseVoiceCommand(rawText: string): ParsedVoiceCommand | null {
     }
   }
 
-  // Suffix: e.g. "cámara 2 preparada", "cam 3 previo", "camera 4 preview"
+  // Suffix: e.g. "cámara 2 preparada", "cámara 3 prevenida", "cam 3 previo", "camera 4 preview"
   const previewMatch2 = normalized.match(
-    /\b(?:c[áa]mara|camera|cam)\s*([1-8])\s*(?:en\s+)?(preparad[oa]|prepara|previo|preview|standby|ready)\b/i
+    /\b(?:c[áa]mara|camera|cam)\s*([1-8])\s*(?:en\s+)?(preparad[oa]|prepara|prevenid[oa]|previene|previo|preview|standby|ready)\b/i
   );
   if (previewMatch2 && previewMatch2[1]) {
     const num = parseInt(previewMatch2[1], 10);
@@ -110,7 +144,7 @@ export function parseVoiceCommand(rawText: string): ParsedVoiceCommand | null {
     }
   }
 
-  // 2. PROGRAM TRIGGERS (Strict regex matching: dentro, aire, vamos con, pincha, va, corte...)
+  // 3. PROGRAM TRIGGERS (Strict regex matching: dentro, aire, vamos con, pincha, va, corte...)
   // Prefix: e.g. "dentro cámara 1", "aire cámara 2", "vamos con cámara 3", "pincha cámara 4", "corte 5"
   const programMatch1 = normalized.match(
     /\b(dentro|aire|al\s+aire|vamos\s+con|pincha|va|corte|cut|take|live)\s*(?:de\s+)?(?:la\s+)?(?:c[áa]mara|camera|cam)?\s*([1-8])\b/i
@@ -143,6 +177,18 @@ export function parseVoiceCommand(rawText: string): ParsedVoiceCommand | null {
         rawPhrase: programMatch2[0].trim(),
       };
     }
+  }
+
+  // 4. STANDALONE FADE TRIGGER (No camera number specified: "fundido", "hacer fundido", "haz fundido", "fade", "disolución")
+  const standaloneFadeMatch = normalized.match(
+    /\b(?:hacer\s+|haz\s+)?(fundido|fundir|disoluci[óo]n|fade)\b/i
+  );
+  if (standaloneFadeMatch) {
+    return {
+      type: 'FADE',
+      triggerWord: standaloneFadeMatch[1].toLowerCase(),
+      rawPhrase: standaloneFadeMatch[0].trim(),
+    };
   }
 
   // Standalone "cámara X" without an explicit action verb: MUST NOT trigger cut or preview
