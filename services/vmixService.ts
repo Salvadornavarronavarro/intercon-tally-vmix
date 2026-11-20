@@ -49,6 +49,7 @@ class VmixService {
   private isLoaded = false;
   private isPolling = false;
   private isChecking = false;
+  private bridgeWindow: Window | null = null;
 
   constructor() {
     this.loadConfig().catch((err) => {
@@ -745,9 +746,46 @@ class VmixService {
   }
 
   /**
-   * Dispatches commands to vMix silently in the background using passive Image beacons and dynamic scripts.
-   * Completely avoids any HTML form submissions so Safari iOS NEVER shows "Este formulario no es seguro".
-   * Commands like CUT, PREVIEW, FADE, AUDIO execute instantaneously in vMix without any security dialog.
+   * Opens or links the dedicated, lightweight named HTTP Bridge window/tab on port 8088.
+   * This provides an explicit browser navigation context directly targeting http://<PC-IP>:8088/api,
+   * enabling Safari iOS to execute every subsequent command (CUT, PREVIEW, FADE, AUDIO, Input)
+   * natively on the local network without Mixed Content blocks or form security warnings.
+   */
+  public openHttpBridgeWindow(): Window | null {
+    if (typeof window === 'undefined') return null;
+    const host = (this.config.host || '127.0.0.1').trim();
+    const port = (this.config.port || '8088').trim();
+    const initialUrl = `http://${host}:${port}/api`;
+
+    try {
+      if (this.bridgeWindow && !this.bridgeWindow.closed) {
+        try {
+          this.bridgeWindow.location.replace(initialUrl);
+        } catch {
+          this.bridgeWindow = window.open(initialUrl, 'vmix_cmd_bridge', 'width=100,height=100,left=0,top=0');
+        }
+      } else {
+        this.bridgeWindow = window.open(initialUrl, 'vmix_cmd_bridge', 'width=100,height=100,left=0,top=0');
+      }
+
+      if (typeof window.focus === 'function') {
+        setTimeout(() => {
+          try { window.focus(); } catch {}
+        }, 50);
+      }
+      return this.bridgeWindow;
+    } catch (err) {
+      console.warn('[VmixService] Error opening bridge window:', err);
+      return null;
+    }
+  }
+
+  /**
+   * Dispatches commands to vMix in HTTP Bridge mode via a single reusable named background window/tab
+   * (window.open(url, 'vmix_cmd_bridge', 'width=100,height=100')).
+   * This completely bypasses Safari iOS Mixed Content and Local Network security blocks,
+   * without using HTML form submissions so NO security prompts appear.
+   * Commands like CUT, PREVIEW, FADE, AUDIO execute instantaneously in vMix.
    */
   public sendViaHttpBridge(url: string): void {
     const cacheBuster = `_t=${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
@@ -763,7 +801,32 @@ class VmixService {
       } catch {}
     }
 
-    // 1. Primary: Passive Image beacon (Allowed silently by Safari / WebKit with zero popups)
+    // 1. Primary: Reusable named background popup/tab (window.open(url, 'vmix_cmd_bridge', 'width=100,height=100'))
+    // Executes as a top-level native HTTP navigation on port 8088, delivering the GET request directly to vMix Web Controller.
+    if (typeof window !== 'undefined') {
+      try {
+        if (this.bridgeWindow && !this.bridgeWindow.closed) {
+          try {
+            this.bridgeWindow.location.replace(fullUrl);
+          } catch {
+            this.bridgeWindow = window.open(fullUrl, 'vmix_cmd_bridge', 'width=100,height=100,left=0,top=0');
+          }
+        } else {
+          this.bridgeWindow = window.open(fullUrl, 'vmix_cmd_bridge', 'width=100,height=100,left=0,top=0');
+        }
+
+        // Refocus main window so director view remains active in front
+        if (typeof window.focus === 'function') {
+          setTimeout(() => {
+            try { window.focus(); } catch {}
+          }, 50);
+        }
+      } catch (winErr) {
+        console.warn('[VmixService] Bridge window navigation notice:', winErr);
+      }
+    }
+
+    // 2. Secondary fallback: Passive Image beacon (silent)
     try {
       const img = new Image();
       img.src = fullUrl;
@@ -771,7 +834,7 @@ class VmixService {
       console.warn('[VmixService] Image beacon dispatch notice:', e);
     }
 
-    // 2. Secondary: Dynamic script tag (Executed silently in the background by WebKit without form prompt)
+    // 3. Tertiary fallback: Dynamic script tag (silent)
     if (typeof document !== 'undefined') {
       try {
         const script = document.createElement('script');
@@ -781,7 +844,6 @@ class VmixService {
           try { script.remove(); } catch {}
         };
         script.onerror = () => {
-          // Expected because vMix responds with XML, but the HTTP GET was already sent & executed!
           try { script.remove(); } catch {}
         };
         (document.head || document.body || document.documentElement).appendChild(script);

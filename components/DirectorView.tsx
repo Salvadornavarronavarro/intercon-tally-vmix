@@ -120,16 +120,11 @@ export const DirectorView: React.FC = () => {
     }
   };
 
-  const handleOpenHttpDirect = () => {
-    const host = (vmixConfig.host || '127.0.0.1').trim();
-    const port = (vmixConfig.port || '8088').trim();
-    const targetUrl = `http://${host}:${port}/`;
-
-    if (typeof window !== 'undefined') {
-      // One-tap direct HTTP controller open (bypasses Safari mixed-content blocks)
-      window.open(targetUrl, '_blank');
-    }
+  const handleOpenHttpBridge = () => {
+    // Open/link the dedicated reusable named bridge window on port 8088 (bypasses Safari mixed-content blocks)
+    vmixService.openHttpBridgeWindow();
   };
+  const handleOpenHttpDirect = handleOpenHttpBridge;
 
   const activeProgramCameraRef = useRef(activeProgramCamera);
   activeProgramCameraRef.current = activeProgramCamera;
@@ -1368,15 +1363,15 @@ export const DirectorView: React.FC = () => {
                     </View>
                   </View>
                   <Text style={styles.vmixHttpBridgeDesc}>
-                    El Modo Puente HTTP interno ya está activo en esta aplicación web para enviar órdenes (CUT, PREVIEW, FADE y AUDIO) directamente a vMix en http://{vmixConfig.host}:{vmixConfig.port || '8088'}/api sin bloqueos de Mixed Content. También puedes abrir el controlador directo de vMix en Safari con un solo toque:
+                    El Modo Puente HTTP interno utiliza una ventana de fondo reutilizable para enviar tus órdenes (CUT, PREVIEW, FADE y AUDIO) directamente a vMix en http://{vmixConfig.host}:{vmixConfig.port || '8088'}/api sin bloqueos de Mixed Content en Safari iOS. Pulsa para vincular o abrir la ventana puente:
                   </Text>
                   <TouchableOpacity
                     style={styles.vmixHttpBridgeBtn}
-                    onPress={handleOpenHttpDirect}
+                    onPress={handleOpenHttpBridge}
                     activeOpacity={0.85}
                   >
                     <Text style={styles.vmixHttpBridgeBtnText}>
-                      ⚡ ABRIR CONTROLADOR DIRECTO HTTP (PUERTO {vmixConfig.port || '8088'})
+                      ⚡ ABRIR VENTANA PUENTE HTTP (PUERTO {vmixConfig.port || '8088'})
                     </Text>
                   </TouchableOpacity>
                 </View>
