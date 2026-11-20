@@ -71,6 +71,8 @@ export const DirectorView: React.FC = () => {
   const [isAutoDetecting, setIsAutoDetecting] = useState<boolean>(false);
   const [autoDetectFeedback, setAutoDetectFeedback] = useState<string | null>(null);
   const [detectedHostSuggestion, setDetectedHostSuggestion] = useState<string | null>(null);
+  const hostSaveTimeoutRef = useRef<any>(null);
+  const portSaveTimeoutRef = useRef<any>(null);
 
   // QR Code camera invite modal state
   const [isQrModalOpen, setIsQrModalOpen] = useState<boolean>(false);
@@ -229,6 +231,8 @@ export const DirectorView: React.FC = () => {
     })();
 
     return () => {
+      if (hostSaveTimeoutRef.current) clearTimeout(hostSaveTimeoutRef.current);
+      if (portSaveTimeoutRef.current) clearTimeout(portSaveTimeoutRef.current);
       if (unsubStatus) unsubStatus();
       vmixService.stopPolling();
     };
@@ -369,7 +373,21 @@ export const DirectorView: React.FC = () => {
     }
   };
 
+  const handleHostInputChange = (host: string) => {
+    setVmixHostInput(host);
+    if (hostSaveTimeoutRef.current) clearTimeout(hostSaveTimeoutRef.current);
+    hostSaveTimeoutRef.current = setTimeout(async () => {
+      const clean = host.trim();
+      if (clean) {
+        const updated = await vmixService.updateConfig({ host: clean });
+        setVmixConfig(updated);
+        vmixService.checkStatus().catch(() => {});
+      }
+    }, 500);
+  };
+
   const handleSaveVmixHost = async (host: string) => {
+    if (hostSaveTimeoutRef.current) clearTimeout(hostSaveTimeoutRef.current);
     setVmixHostInput(host);
     const updated = await vmixService.updateConfig({ host: host.trim() });
     setVmixConfig(updated);
@@ -396,7 +414,21 @@ export const DirectorView: React.FC = () => {
     }
   };
 
+  const handlePortInputChange = (port: string) => {
+    setVmixPortInput(port);
+    if (portSaveTimeoutRef.current) clearTimeout(portSaveTimeoutRef.current);
+    portSaveTimeoutRef.current = setTimeout(async () => {
+      const clean = port.trim();
+      if (clean) {
+        const updated = await vmixService.updateConfig({ port: clean });
+        setVmixConfig(updated);
+        vmixService.checkStatus().catch(() => {});
+      }
+    }, 500);
+  };
+
   const handleSaveVmixPort = async (port: string) => {
+    if (portSaveTimeoutRef.current) clearTimeout(portSaveTimeoutRef.current);
     setVmixPortInput(port);
     const updated = await vmixService.updateConfig({ port: port.trim() });
     setVmixConfig(updated);
@@ -1288,7 +1320,7 @@ export const DirectorView: React.FC = () => {
                     <TextInput
                       style={styles.vmixTextInput}
                       value={vmixHostInput}
-                      onChangeText={handleSaveVmixHost}
+                      onChangeText={handleHostInputChange}
                       placeholder="127.0.0.1 or 169.254.x.x"
                       placeholderTextColor="#666"
                       autoCapitalize="none"
@@ -1386,7 +1418,7 @@ export const DirectorView: React.FC = () => {
                     <TextInput
                       style={[styles.vmixTextInput, styles.vmixPortInput]}
                       value={vmixPortInput}
-                      onChangeText={handleSaveVmixPort}
+                      onChangeText={handlePortInputChange}
                       placeholder="8088"
                       placeholderTextColor="#666"
                       keyboardType="numeric"

@@ -210,15 +210,33 @@ class WebSpeechEngine implements VoiceRecognitionEngine {
   private isListening = false;
   private shouldBeListening = false;
   private restartTimeout: any = null;
+  private pendingFadeTimeout: any = null;
   private callbacks: VoiceCommandCallbacks = {};
   private lastTriggeredKey = '';
   private lastTriggeredTime = 0;
+  private visibilityListener: (() => void) | null = null;
+  private focusListener: (() => void) | null = null;
 
   isSupported(): boolean {
     if (Platform.OS !== 'web' || typeof window === 'undefined') return false;
     const SpeechRecognition =
       (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     return !!SpeechRecognition;
+  }
+
+  private executeCommand(command: ParsedVoiceCommand): void {
+    const commandKey = `${command.type}_${command.cameraId || 'standalone'}`;
+    const now = Date.now();
+
+    // Deduplicate identical triggers within 1200ms
+    if (
+      commandKey !== this.lastTriggeredKey ||
+      now - this.lastTriggeredTime > 1200
+    ) {
+      this.lastTriggeredKey = commandKey;
+      this.lastTriggeredTime = now;
+      this.callbacks.onCommand?.(command);
+    }
   }
 
   async start(callbacks: VoiceCommandCallbacks): Promise<boolean> {
@@ -230,6 +248,29 @@ class WebSpeechEngine implements VoiceRecognitionEngine {
 
     this.callbacks = callbacks;
     this.shouldBeListening = true;
+
+    // Attach visibility and focus listeners for robust auto-recovery on iOS Safari
+    if (typeof document !== 'undefined' && !this.visibilityListener) {
+      this.visibilityListener = () => {
+        if (document.visibilityState === 'visible' && this.shouldBeListening && !this.isListening) {
+          try {
+            this.recognition?.start();
+          } catch {}
+        }
+      };
+      document.addEventListener('visibilitychange', this.visibilityListener);
+    }
+
+    if (typeof window !== 'undefined' && !this.focusListener) {
+      this.focusListener = () => {
+        if (this.shouldBeListening && !this.isListening) {
+          try {
+            this.recognition?.start();
+          } catch {}
+        }
+      };
+      window.addEventListener('focus', this.focusListener);
+    }
 
     try {
       const SpeechRecognition =
@@ -266,17 +307,29 @@ class WebSpeechEngine implements VoiceRecognitionEngine {
           // Evaluate command
           const command = parseVoiceCommand(latestTranscript);
           if (command) {
-            const commandKey = `${command.type}_${command.cameraId}`;
-            const now = Date.now();
-
-            // Deduplicate triggers within 1200ms
-            if (
-              commandKey !== this.lastTriggeredKey ||
-              now - this.lastTriggeredTime > 1200
-            ) {
-              this.lastTriggeredKey = commandKey;
-              this.lastTriggeredTime = now;
-              this.callbacks.onCommand?.(command);
+            // Defense against interim transcript overlap:
+            // When saying "fundido cámara 2", the engine first emits an interim "fundido".
+            // A standalone FADE must NOT fire immediately on partial interim speech if a camera number might follow.
+            if (command.type === 'FADE' && !command.cameraId) {
+              if (this.pendingFadeTimeout) {
+                clearTimeout(this.pendingFadeTimeout);
+              }
+              if (isFinal) {
+                this.executeCommand(command);
+              } else {
+                // Wait 400ms: if the user continues with "cámara X", this timer is canceled!
+                this.pendingFadeTimeout = setTimeout(() => {
+                  this.executeCommand(command);
+                }, 400);
+              }
+            } else {
+              // Camera-specific command arrived (PREVIEW, PROGRAM, or FADE with cameraId):
+              // Cancel any pending standalone FADE and execute immediately
+              if (this.pendingFadeTimeout) {
+                clearTimeout(this.pendingFadeTimeout);
+                this.pendingFadeTimeout = null;
+              }
+              this.executeCommand(command);
             }
           }
         };
@@ -301,7 +354,7 @@ class WebSpeechEngine implements VoiceRecognitionEngine {
         this.recognition.onend = () => {
           this.isListening = false;
           if (this.shouldBeListening) {
-            // Hands-free continuous auto-restart
+            // Hands-free continuous auto-restart with backoff guard
             if (this.restartTimeout) clearTimeout(this.restartTimeout);
             this.restartTimeout = setTimeout(() => {
               if (this.shouldBeListening) {
@@ -322,8 +375,16 @@ class WebSpeechEngine implements VoiceRecognitionEngine {
       return true;
     } catch (err: any) {
       console.warn('[WebSpeechEngine] Start error:', err);
-      // If already started, mark listening
+      // If already started or transitioning, handle gracefully
       if (err.name === 'InvalidStateError') {
+        try {
+          this.recognition?.abort();
+        } catch {}
+        setTimeout(() => {
+          if (this.shouldBeListening) {
+            try { this.recognition?.start(); } catch {}
+          }
+        }, 150);
         this.isListening = true;
         this.callbacks.onStatusChange?.(true);
         return true;
@@ -340,11 +401,25 @@ class WebSpeechEngine implements VoiceRecognitionEngine {
       clearTimeout(this.restartTimeout);
       this.restartTimeout = null;
     }
+    if (this.pendingFadeTimeout) {
+      clearTimeout(this.pendingFadeTimeout);
+      this.pendingFadeTimeout = null;
+    }
+    if (this.visibilityListener && typeof document !== 'undefined') {
+      document.removeEventListener('visibilitychange', this.visibilityListener);
+      this.visibilityListener = null;
+    }
+    if (this.focusListener && typeof window !== 'undefined') {
+      window.removeEventListener('focus', this.focusListener);
+      this.focusListener = null;
+    }
     if (this.recognition) {
       try {
-        this.recognition.stop();
+        this.recognition.abort();
       } catch {
-        // Safe ignore
+        try {
+          this.recognition.stop();
+        } catch {}
       }
     }
     this.callbacks.onStatusChange?.(false);

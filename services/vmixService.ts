@@ -94,12 +94,24 @@ class VmixService {
   public async loadConfig(): Promise<VmixConfig> {
     if (this.isLoaded) return this.config;
     try {
-      const json = await AsyncStorage.getItem(STORAGE_KEY);
+      let json = await AsyncStorage.getItem(STORAGE_KEY);
+      if (!json && typeof window !== 'undefined' && window.localStorage) {
+        json = window.localStorage.getItem(STORAGE_KEY);
+      }
       if (json) {
         const parsed = JSON.parse(json);
+        const validHost = (parsed.host && typeof parsed.host === 'string' && parsed.host.trim())
+          ? parsed.host.trim()
+          : DEFAULT_VMIX_CONFIG.host;
+        const validPort = (parsed.port && typeof parsed.port === 'string' && parsed.port.trim())
+          ? parsed.port.trim()
+          : DEFAULT_VMIX_CONFIG.port;
+
         this.config = {
           ...DEFAULT_VMIX_CONFIG,
           ...parsed,
+          host: validHost,
+          port: validPort,
           cameraMap: {
             ...DEFAULT_VMIX_CONFIG.cameraMap,
             ...(parsed.cameraMap || {}),
@@ -344,16 +356,29 @@ class VmixService {
    * Update and persist vMix configuration
    */
   public async updateConfig(newConfig: Partial<VmixConfig>): Promise<VmixConfig> {
+    const cleanHost = newConfig.host !== undefined
+      ? (newConfig.host.trim() || this.config.host || DEFAULT_VMIX_CONFIG.host)
+      : this.config.host;
+    const cleanPort = newConfig.port !== undefined
+      ? (newConfig.port.trim() || this.config.port || DEFAULT_VMIX_CONFIG.port)
+      : this.config.port;
+
     this.config = {
       ...this.config,
       ...newConfig,
+      host: cleanHost,
+      port: cleanPort,
       cameraMap: {
         ...this.config.cameraMap,
         ...(newConfig.cameraMap || {}),
       },
     };
     try {
-      await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(this.config));
+      const serialized = JSON.stringify(this.config);
+      await AsyncStorage.setItem(STORAGE_KEY, serialized);
+      if (typeof window !== 'undefined' && window.localStorage) {
+        window.localStorage.setItem(STORAGE_KEY, serialized);
+      }
     } catch (err) {
       console.warn('[VmixService] Failed to save config to storage:', err);
     }
@@ -782,39 +807,93 @@ class VmixService {
     }
   }
 
+  /**
+   * Coalesces redundant volume updates when the bridge queue has multiple pending items.
+   * Keeps the latest SetVolume / SetMasterVolume values while strictly preserving
+   * the exact order and execution of all switching/tally commands (Cut, Fade, PreviewInput, CutDirect, Audio).
+   */
+  private optimizeBridgeQueue(): void {
+    if (this.bridgeQueue.length <= 3) return;
+
+    const latestVolumeIdxByInput = new Map<string, number>();
+
+    // Scan backwards to find the latest index for each input's volume command
+    for (let i = this.bridgeQueue.length - 1; i >= 0; i--) {
+      const url = this.bridgeQueue[i];
+      if (url.includes('Function=SetVolume')) {
+        const inputMatch = url.match(/[?&]Input=([^&]+)/);
+        const inputKey = inputMatch ? inputMatch[1] : 'unknown';
+        if (!latestVolumeIdxByInput.has(`ch_${inputKey}`)) {
+          latestVolumeIdxByInput.set(`ch_${inputKey}`, i);
+        }
+      } else if (url.includes('Function=SetMasterVolume')) {
+        if (!latestVolumeIdxByInput.has('master')) {
+          latestVolumeIdxByInput.set('master', i);
+        }
+      }
+    }
+
+    const optimized: string[] = [];
+    for (let i = 0; i < this.bridgeQueue.length; i++) {
+      const url = this.bridgeQueue[i];
+      if (url.includes('Function=SetVolume')) {
+        const inputMatch = url.match(/[?&]Input=([^&]+)/);
+        const inputKey = inputMatch ? inputMatch[1] : 'unknown';
+        if (latestVolumeIdxByInput.get(`ch_${inputKey}`) === i) {
+          optimized.push(url);
+        }
+      } else if (url.includes('Function=SetMasterVolume')) {
+        if (latestVolumeIdxByInput.get('master') === i) {
+          optimized.push(url);
+        }
+      } else {
+        // Retain all switching (Cut, Fade, PreviewInput, CutDirect) and Audio mute commands
+        optimized.push(url);
+      }
+    }
+
+    this.bridgeQueue = optimized;
+  }
+
   private processBridgeQueue(): void {
     if (this.isProcessingBridgeQueue || this.bridgeQueue.length === 0) {
       return;
     }
     this.isProcessingBridgeQueue = true;
-    const targetUrl = this.bridgeQueue.shift();
 
-    if (targetUrl && typeof window !== 'undefined') {
-      try {
-        if (this.bridgeWindow && !this.bridgeWindow.closed) {
-          try {
-            this.bridgeWindow.location.replace(targetUrl);
-          } catch {
+    try {
+      this.optimizeBridgeQueue();
+      const targetUrl = this.bridgeQueue.shift();
+
+      if (targetUrl && typeof window !== 'undefined') {
+        try {
+          if (this.bridgeWindow && !this.bridgeWindow.closed) {
+            try {
+              this.bridgeWindow.location.replace(targetUrl);
+            } catch {
+              this.bridgeWindow = window.open(targetUrl, 'vmix_cmd_bridge', 'width=100,height=100,left=0,top=0');
+            }
+          } else {
             this.bridgeWindow = window.open(targetUrl, 'vmix_cmd_bridge', 'width=100,height=100,left=0,top=0');
           }
-        } else {
-          this.bridgeWindow = window.open(targetUrl, 'vmix_cmd_bridge', 'width=100,height=100,left=0,top=0');
-        }
 
-        if (typeof window.focus === 'function') {
-          setTimeout(() => {
-            try { window.focus(); } catch {}
-          }, 50);
+          if (typeof window.focus === 'function') {
+            setTimeout(() => {
+              try { window.focus(); } catch {}
+            }, 50);
+          }
+        } catch (winErr) {
+          console.warn('[VmixService] Bridge window navigation notice:', winErr);
         }
-      } catch (winErr) {
-        console.warn('[VmixService] Bridge window navigation notice:', winErr);
       }
+    } catch (err) {
+      console.warn('[VmixService] processBridgeQueue error:', err);
+    } finally {
+      setTimeout(() => {
+        this.isProcessingBridgeQueue = false;
+        this.processBridgeQueue();
+      }, 70);
     }
-
-    setTimeout(() => {
-      this.isProcessingBridgeQueue = false;
-      this.processBridgeQueue();
-    }, 70);
   }
 
   /**
@@ -850,18 +929,23 @@ class VmixService {
       console.warn('[VmixService] Image beacon dispatch notice:', e);
     }
 
-    // 3. Tertiary fallback: Dynamic script tag (silent)
+    // 3. Tertiary fallback: Dynamic script tag (silent with safe cleanup timeout)
     if (typeof document !== 'undefined') {
       try {
         const script = document.createElement('script');
         script.src = fullUrl;
         script.async = true;
-        script.onload = () => {
-          try { script.remove(); } catch {}
+        let cleaned = false;
+        const cleanupScript = () => {
+          if (!cleaned) {
+            cleaned = true;
+            try { script.remove(); } catch {}
+          }
         };
-        script.onerror = () => {
-          try { script.remove(); } catch {}
-        };
+        script.onload = cleanupScript;
+        script.onerror = cleanupScript;
+        // Safety timeout to clean up script element even if WebKit silences mixed-content events
+        setTimeout(cleanupScript, 5000);
         (document.head || document.body || document.documentElement).appendChild(script);
       } catch (e) {
         console.warn('[VmixService] Dynamic script dispatch notice:', e);
@@ -954,7 +1038,8 @@ class VmixService {
    */
   public async setMasterVolume(percentage: number): Promise<boolean> {
     try {
-      const clamped = Math.max(0, Math.min(100, Math.round(percentage)));
+      const validVal = Number.isFinite(percentage) ? percentage : 75;
+      const clamped = Math.max(0, Math.min(100, Math.round(validVal)));
       const result = await this.dispatchCommand('SetMasterVolume', undefined, { Value: clamped.toString() });
       return result.success;
     } catch (err: any) {
@@ -971,7 +1056,8 @@ class VmixService {
     try {
       const defaultIndex = cameraId.replace(/\D/g, '') || '1';
       const mappedInput = this.config.cameraMap[cameraId] || defaultIndex;
-      const clamped = Math.max(0, Math.min(100, Math.round(percentage)));
+      const validVal = Number.isFinite(percentage) ? percentage : 75;
+      const clamped = Math.max(0, Math.min(100, Math.round(validVal)));
       const result = await this.dispatchCommand('SetVolume', mappedInput, { Value: clamped.toString() });
       return result.success;
     } catch (err: any) {

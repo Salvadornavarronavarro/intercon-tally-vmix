@@ -67,15 +67,21 @@ const MASTER_VU_DB_MARKS = [
 const TOTAL_LED_SEGMENTS = 18;
 
 function volumeToDbString(vol: number): string {
-  if (vol <= 0.02) return '-∞ dB';
+  const safeVol = Number.isFinite(vol) ? vol : 0;
+  if (safeVol <= 0.02) return '-∞ dB';
   let db: number;
-  if (vol >= 0.75) {
-    db = ((vol - 0.75) / 0.25) * 10;
+  if (safeVol >= 0.75) {
+    db = ((safeVol - 0.75) / 0.25) * 10;
   } else {
-    db = ((vol - 0.75) / 0.75) * 50;
+    db = ((safeVol - 0.75) / 0.75) * 50;
   }
   const sign = db > 0 ? '+' : '';
   return `${sign}${db.toFixed(1)} dB`;
+}
+
+function safeClampRatio(val: number, fallback: number = 0.75): number {
+  if (!Number.isFinite(val)) return fallback;
+  return Math.max(0, Math.min(1, val));
 }
 
 function panToString(pan: number): string {
@@ -198,7 +204,20 @@ export const AudioMixerView: React.FC<AudioMixerViewProps> = ({
 
   // Pointer drag tracking
   const draggingTargetRef = useRef<{ type: 'fader' | 'pan'; id: string; startY?: number; startVal?: number } | null>(null);
+  const activePointerCleanupRef = useRef<(() => void) | null>(null);
   const lastKnobClickTimeRef = useRef<Record<string, number>>({});
+
+  // Clean up any lingering pointer listeners on unmount
+  useEffect(() => {
+    return () => {
+      if (activePointerCleanupRef.current) {
+        try {
+          activePointerCleanupRef.current();
+        } catch {}
+        activePointerCleanupRef.current = null;
+      }
+    };
+  }, []);
 
   // Sync external mute map if changed
   useEffect(() => {
@@ -350,7 +369,7 @@ export const AudioMixerView: React.FC<AudioMixerViewProps> = ({
   }, []);
 
   const handleSetVolume = useCallback((camId: string, newVol: number) => {
-    const clamped = Math.max(0, Math.min(1, newVol));
+    const clamped = safeClampRatio(newVol);
     setChannels((prev) =>
       prev.map((ch) => (ch.id === camId ? { ...ch, volume: clamped } : ch))
     );
@@ -358,7 +377,7 @@ export const AudioMixerView: React.FC<AudioMixerViewProps> = ({
   }, [sendVmixChannelVolumeThrottled]);
 
   const handleSetVolumeA = useCallback((camId: string, newVol: number) => {
-    const clamped = Math.max(0, Math.min(1, newVol));
+    const clamped = safeClampRatio(newVol);
     setChannels((prev) =>
       prev.map((ch) => (ch.id === camId ? { ...ch, volumeA: clamped } : ch))
     );
@@ -366,7 +385,7 @@ export const AudioMixerView: React.FC<AudioMixerViewProps> = ({
   }, [sendVmixChannelVolumeThrottled]);
 
   const handleSetVolumeB = useCallback((camId: string, newVol: number) => {
-    const clamped = Math.max(0, Math.min(1, newVol));
+    const clamped = safeClampRatio(newVol);
     setChannels((prev) =>
       prev.map((ch) => (ch.id === camId ? { ...ch, volumeB: clamped } : ch))
     );
@@ -374,7 +393,8 @@ export const AudioMixerView: React.FC<AudioMixerViewProps> = ({
   }, [sendVmixChannelVolumeThrottled]);
 
   const handleSetPan = useCallback((camId: string, newPan: number) => {
-    const clamped = Math.max(-100, Math.min(100, newPan));
+    const validPan = Number.isFinite(newPan) ? newPan : 0;
+    const clamped = Math.max(-100, Math.min(100, validPan));
     setChannels((prev) =>
       prev.map((ch) => (ch.id === camId ? { ...ch, pan: clamped } : ch))
     );
@@ -408,19 +428,19 @@ export const AudioMixerView: React.FC<AudioMixerViewProps> = ({
   }, []);
 
   const handleSetMasterVolume = useCallback((newVol: number) => {
-    const clamped = Math.max(0, Math.min(1, newVol));
+    const clamped = safeClampRatio(newVol);
     setMasterVolume(clamped);
     sendVmixMasterThrottled(clamped);
   }, [sendVmixMasterThrottled]);
 
   const handleSetMasterVolumeL = useCallback((newVol: number) => {
-    const clamped = Math.max(0, Math.min(1, newVol));
+    const clamped = safeClampRatio(newVol);
     setMasterVolumeL(clamped);
     sendVmixMasterThrottled(clamped);
   }, [sendVmixMasterThrottled]);
 
   const handleSetMasterVolumeR = useCallback((newVol: number) => {
-    const clamped = Math.max(0, Math.min(1, newVol));
+    const clamped = safeClampRatio(newVol);
     setMasterVolumeR(clamped);
     sendVmixMasterThrottled(clamped);
   }, [sendVmixMasterThrottled]);
@@ -431,8 +451,14 @@ export const AudioMixerView: React.FC<AudioMixerViewProps> = ({
 
     setChannels((prev) =>
       prev.map((ch) => {
-        if (ch.muted !== targetState && onToggleCameraMute) {
-          onToggleCameraMute(ch.id);
+        if (ch.muted !== targetState) {
+          if (onToggleCameraMute) {
+            onToggleCameraMute(ch.id);
+          }
+          // Synchronize mute state with vMix for each toggled camera
+          vmixService.toggleChannelAudio(ch.id).catch((err) => {
+            console.warn(`[AudioMixerView] toggleChannelAudio(${ch.id}) error in allMute:`, err);
+          });
         }
         return { ...ch, muted: targetState };
       })
@@ -442,6 +468,14 @@ export const AudioMixerView: React.FC<AudioMixerViewProps> = ({
   // Robust Fader Drag Interactions with Calibrated Headroom, Window Listeners, and Pointer Capture
   const handleFaderPointerDown = (e: any, targetId: string) => {
     if (Platform.OS === 'web' && e) {
+      // Clear any prior pointer listeners before starting a new interaction
+      if (activePointerCleanupRef.current) {
+        try {
+          activePointerCleanupRef.current();
+        } catch {}
+        activePointerCleanupRef.current = null;
+      }
+
       const nativeEvent = e.nativeEvent || e;
       if (nativeEvent.preventDefault && typeof nativeEvent.preventDefault === 'function') {
         try {
@@ -479,7 +513,7 @@ export const AudioMixerView: React.FC<AudioMixerViewProps> = ({
       let currentDragRatio = 0.75;
 
       const updateVolumeFromY = (clientY: number) => {
-        if (!trackRect || trackRect.height <= 0) return;
+        if (!trackRect || trackRect.height <= 0 || !Number.isFinite(clientY)) return;
 
         // Top clamp triggers exactly when fader cap reaches the +10 dB visual line (at topThreshold)
         // Bottom clamp triggers when fader cap reaches the -inf visual line (at bottomThreshold)
@@ -490,7 +524,7 @@ export const AudioMixerView: React.FC<AudioMixerViewProps> = ({
           ratio = 0.0;
         } else {
           const fractionFromTop = (clientY - topThreshold) / usableSpan;
-          ratio = Math.max(0, Math.min(1, 1 - fractionFromTop));
+          ratio = safeClampRatio(1 - fractionFromTop);
         }
 
         currentDragRatio = ratio;
@@ -516,7 +550,7 @@ export const AudioMixerView: React.FC<AudioMixerViewProps> = ({
         ? nativeEvent.clientY
         : (nativeEvent.touches?.[0]?.clientY ?? nativeEvent.pageY);
 
-      if (initialY !== undefined) {
+      if (initialY !== undefined && Number.isFinite(initialY)) {
         updateVolumeFromY(initialY);
       }
 
@@ -531,13 +565,14 @@ export const AudioMixerView: React.FC<AudioMixerViewProps> = ({
             (ev as MouseEvent).clientY ??
             (ev as TouchEvent).touches?.[0]?.clientY ??
             (ev as any).pageY;
-          if (moveY !== undefined) {
+          if (moveY !== undefined && Number.isFinite(moveY)) {
             updateVolumeFromY(moveY);
           }
         }
       };
 
-      const handleWindowPointerUp = () => {
+      const cleanupListeners = () => {
+        activePointerCleanupRef.current = null;
         draggingTargetRef.current = null;
         if (targetId === 'master' || targetId === 'master_L' || targetId === 'master_R') {
           sendVmixMasterThrottled(currentDragRatio, true);
@@ -563,6 +598,12 @@ export const AudioMixerView: React.FC<AudioMixerViewProps> = ({
         window.removeEventListener('touchcancel', handleWindowPointerUp as any);
         window.removeEventListener('blur', handleWindowPointerUp as any);
       };
+
+      const handleWindowPointerUp = () => {
+        cleanupListeners();
+      };
+
+      activePointerCleanupRef.current = cleanupListeners;
 
       window.addEventListener('pointermove', handleWindowPointerMove as any);
       window.addEventListener('pointerup', handleWindowPointerUp as any);
