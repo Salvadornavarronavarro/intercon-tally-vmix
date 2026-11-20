@@ -50,6 +50,8 @@ class VmixService {
   private isPolling = false;
   private isChecking = false;
   private bridgeWindow: Window | null = null;
+  private bridgeQueue: string[] = [];
+  private isProcessingBridgeQueue = false;
 
   constructor() {
     this.loadConfig().catch((err) => {
@@ -780,6 +782,41 @@ class VmixService {
     }
   }
 
+  private processBridgeQueue(): void {
+    if (this.isProcessingBridgeQueue || this.bridgeQueue.length === 0) {
+      return;
+    }
+    this.isProcessingBridgeQueue = true;
+    const targetUrl = this.bridgeQueue.shift();
+
+    if (targetUrl && typeof window !== 'undefined') {
+      try {
+        if (this.bridgeWindow && !this.bridgeWindow.closed) {
+          try {
+            this.bridgeWindow.location.replace(targetUrl);
+          } catch {
+            this.bridgeWindow = window.open(targetUrl, 'vmix_cmd_bridge', 'width=100,height=100,left=0,top=0');
+          }
+        } else {
+          this.bridgeWindow = window.open(targetUrl, 'vmix_cmd_bridge', 'width=100,height=100,left=0,top=0');
+        }
+
+        if (typeof window.focus === 'function') {
+          setTimeout(() => {
+            try { window.focus(); } catch {}
+          }, 50);
+        }
+      } catch (winErr) {
+        console.warn('[VmixService] Bridge window navigation notice:', winErr);
+      }
+    }
+
+    setTimeout(() => {
+      this.isProcessingBridgeQueue = false;
+      this.processBridgeQueue();
+    }, 70);
+  }
+
   /**
    * Dispatches commands to vMix in HTTP Bridge mode via a single reusable named background window/tab
    * (window.open(url, 'vmix_cmd_bridge', 'width=100,height=100')).
@@ -801,30 +838,9 @@ class VmixService {
       } catch {}
     }
 
-    // 1. Primary: Reusable named background popup/tab (window.open(url, 'vmix_cmd_bridge', 'width=100,height=100'))
-    // Executes as a top-level native HTTP navigation on port 8088, delivering the GET request directly to vMix Web Controller.
-    if (typeof window !== 'undefined') {
-      try {
-        if (this.bridgeWindow && !this.bridgeWindow.closed) {
-          try {
-            this.bridgeWindow.location.replace(fullUrl);
-          } catch {
-            this.bridgeWindow = window.open(fullUrl, 'vmix_cmd_bridge', 'width=100,height=100,left=0,top=0');
-          }
-        } else {
-          this.bridgeWindow = window.open(fullUrl, 'vmix_cmd_bridge', 'width=100,height=100,left=0,top=0');
-        }
-
-        // Refocus main window so director view remains active in front
-        if (typeof window.focus === 'function') {
-          setTimeout(() => {
-            try { window.focus(); } catch {}
-          }, 50);
-        }
-      } catch (winErr) {
-        console.warn('[VmixService] Bridge window navigation notice:', winErr);
-      }
-    }
+    // 1. Primary: Reusable named background popup/tab with sequential dispatch queue (guarantees rapid CUT & PREVIEW flip-flop execution)
+    this.bridgeQueue.push(fullUrl);
+    this.processBridgeQueue();
 
     // 2. Secondary fallback: Passive Image beacon (silent)
     try {

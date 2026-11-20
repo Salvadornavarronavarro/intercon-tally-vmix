@@ -247,6 +247,8 @@ export const DirectorView: React.FC = () => {
       setPreviewCamera('cam2');
     } else if (activeProgramCamera && !activePreviewCamera) {
       setPreviewCamera(activeProgramCamera === 'cam1' ? 'cam2' : 'cam1');
+    } else if (activeProgramCamera && activePreviewCamera && activeProgramCamera === activePreviewCamera) {
+      setPreviewCamera(activeProgramCamera === 'cam1' ? 'cam2' : 'cam1');
     }
   }, [activeProgramCamera, activePreviewCamera, setProgramCamera, setPreviewCamera]);
 
@@ -254,8 +256,14 @@ export const DirectorView: React.FC = () => {
    * Dispatches PREVIEW:
    * 1. Intercom Tally preview state (green badge + intermittent beep)
    * 2. Asynchronous vMix call: Function=PreviewInput&Input=[Mapped_Input]
+   * 3. Guarantees Preview never duplicates the camera currently live on Program
    */
   const triggerPreview = (camId: string) => {
+    const currentPgm = activeProgramCameraRef.current || activeProgramCamera;
+    if (camId === currentPgm) {
+      console.log(`[DirectorView] Camera ${camId} is already on Program; ignoring duplicate Preview stage.`);
+      return;
+    }
     setPreviewCamera(camId);
     vmixService.sendPreview(camId).catch((err) => {
       console.warn('[DirectorView] Non-blocking vMix sendPreview notice:', err);
@@ -263,14 +271,39 @@ export const DirectorView: React.FC = () => {
   };
 
   /**
-   * Dispatches PROGRAM CUT:
-   * 1. Intercom Tally program cut + 2-second overlap tone on outgoing camera
-   * 2. Immediate vMix call: Function=CutDirect&Input=[Mapped_Input]
+   * Broadcast Flip-Flop PROGRAM Cut Action:
+   * 1. Before sending target camera X to PROGRAM, check which camera was currently in PROGRAM (say camera Y).
+   * 2. If camera Y is different from camera X, automatically move camera Y into PREVIEW (PreviewInput with Input=Y in vMix API
+   *    and update local Preview UI state to Y) while putting camera X into PROGRAM (CutDirect with Input=X in vMix API
+   *    and update local Program UI state to X), so Program and Preview NEVER show the same camera.
+   * 3. Handles both voice commands (e.g. "dentro cámara X") and manual CUT / Program taps.
    */
-  const triggerProgram = (camId: string) => {
-    setProgramCamera(camId);
-    vmixService.sendCut(camId).catch((err) => {
+  const triggerProgram = (targetCamId: string) => {
+    const currentPgm = activeProgramCameraRef.current || activeProgramCamera;
+
+    if (currentPgm === targetCamId) {
+      // Target camera is already active on Program
+      return;
+    }
+
+    // Camera Y was currently in Program; automatically moves to Preview
+    const outgoingPgm = currentPgm || (targetCamId === 'cam1' ? 'cam2' : 'cam1');
+    const nextPreview = outgoingPgm !== targetCamId ? outgoingPgm : (targetCamId === 'cam1' ? 'cam2' : 'cam1');
+
+    console.log(`[DirectorView] Flip-Flop Cut: Promoting ${targetCamId} to PROGRAM, moving outgoing ${nextPreview} to PREVIEW`);
+
+    // Update local UI states immediately for instant operator feedback
+    setProgramCamera(targetCamId);
+    setPreviewCamera(nextPreview);
+
+    // 1. Put camera X into PROGRAM in vMix API (CutDirect)
+    vmixService.sendCut(targetCamId).catch((err) => {
       console.warn('[DirectorView] Non-blocking vMix sendCut notice:', err);
+    });
+
+    // 2. Automatically move camera Y into PREVIEW in vMix API (PreviewInput)
+    vmixService.sendPreview(nextPreview).catch((err) => {
+      console.warn('[DirectorView] Non-blocking vMix sendPreview notice:', err);
     });
   };
 
@@ -404,20 +437,11 @@ export const DirectorView: React.FC = () => {
    * CUT remains permanently enabled for rapid continuous switching.
    */
   const handleTakeCut = () => {
-    const incomingPgm = activePreviewCamera || (activeProgramCamera === 'cam1' ? 'cam2' : 'cam1');
-    const outgoingPgm = activeProgramCamera || (incomingPgm === 'cam1' ? 'cam2' : 'cam1');
-    const nextPreview = outgoingPgm !== incomingPgm ? outgoingPgm : (incomingPgm === 'cam1' ? 'cam2' : 'cam1');
+    const currentPgm = activeProgramCameraRef.current || activeProgramCamera;
+    const currentPvw = activePreviewCameraRef.current || activePreviewCamera;
+    const incomingPgm = currentPvw || (currentPgm === 'cam1' ? 'cam2' : 'cam1');
 
-    setProgramCamera(incomingPgm);
-    setPreviewCamera(nextPreview);
-
-    vmixService.sendCut(incomingPgm).catch((err) => {
-      console.warn('[DirectorView] Non-blocking vMix sendCut notice:', err);
-    });
-
-    vmixService.sendPreview(nextPreview).catch((err) => {
-      console.warn('[DirectorView] Non-blocking vMix sendPreview notice:', err);
-    });
+    triggerProgram(incomingPgm);
   };
 
   /**
@@ -427,8 +451,10 @@ export const DirectorView: React.FC = () => {
    * FADE remains permanently enabled for continuous cross-fading.
    */
   const handleFade = () => {
-    const incomingPgm = activePreviewCamera || (activeProgramCamera === 'cam1' ? 'cam2' : 'cam1');
-    const outgoingPgm = activeProgramCamera || (incomingPgm === 'cam1' ? 'cam2' : 'cam1');
+    const currentPgm = activeProgramCameraRef.current || activeProgramCamera;
+    const currentPvw = activePreviewCameraRef.current || activePreviewCamera;
+    const incomingPgm = currentPvw || (currentPgm === 'cam1' ? 'cam2' : 'cam1');
+    const outgoingPgm = currentPgm || (incomingPgm === 'cam1' ? 'cam2' : 'cam1');
     const nextPreview = outgoingPgm !== incomingPgm ? outgoingPgm : (incomingPgm === 'cam1' ? 'cam2' : 'cam1');
 
     setProgramCamera(incomingPgm);
