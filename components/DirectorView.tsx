@@ -276,21 +276,29 @@ export const DirectorView: React.FC = () => {
    * 2. If camera Y is different from camera X, automatically move camera Y into PREVIEW (PreviewInput with Input=Y in vMix API
    *    and update local Preview UI state to Y) while putting camera X into PROGRAM (CutDirect with Input=X in vMix API
    *    and update local Program UI state to X), so Program and Preview NEVER show the same camera.
-   * 3. Handles both voice commands (e.g. "dentro cámara X") and manual CUT / Program taps.
+   * 3. If target camera X is already in Preview, executes the native broadcast CUT swap.
+   * 4. Handles both voice commands (e.g. "dentro cámara X") and manual CUT / Program taps.
    */
   const triggerProgram = (targetCamId: string) => {
-    const currentPgm = activeProgramCameraRef.current || activeProgramCamera;
+    const currentPgm = activeProgramCameraRef.current || activeProgramCamera || 'cam1';
+    const currentPvw = activePreviewCameraRef.current || activePreviewCamera;
 
     if (currentPgm === targetCamId) {
       // Target camera is already active on Program
       return;
     }
 
+    if (currentPvw === targetCamId) {
+      // Target camera is already in Preview: perform the clean broadcast transition CUT swap
+      handleTakeCut();
+      return;
+    }
+
     // Camera Y was currently in Program; automatically moves to Preview
-    const outgoingPgm = currentPgm || (targetCamId === 'cam1' ? 'cam2' : 'cam1');
+    const outgoingPgm = currentPgm;
     const nextPreview = outgoingPgm !== targetCamId ? outgoingPgm : (targetCamId === 'cam1' ? 'cam2' : 'cam1');
 
-    console.log(`[DirectorView] Flip-Flop Cut: Promoting ${targetCamId} to PROGRAM, moving outgoing ${nextPreview} to PREVIEW`);
+    console.log(`[DirectorView] Direct Cut: Promoting ${targetCamId} to PROGRAM, moving outgoing ${nextPreview} to PREVIEW`);
 
     // Update local UI states immediately for instant operator feedback
     setProgramCamera(targetCamId);
@@ -431,41 +439,60 @@ export const DirectorView: React.FC = () => {
   };
 
   /**
-   * Broadcast Flip-Flop CUT Action:
-   * Transitions active Preview into Program, and automatically assigns
-   * the outgoing Program as the incoming Preview (flip-flop ping-pong switching).
-   * CUT remains permanently enabled for rapid continuous switching.
+   * Broadcast Central CUT Action:
+   * 1. Sends the vMix API command "Cut" (which takes current PREVIEW live to PROGRAM and swaps old PROGRAM into PREVIEW).
+   * 2. Swaps local UI states so the camera that was in PREVIEW moves to PROGRAM (red) and the camera that was in PROGRAM moves to PREVIEW (green).
+   * 3. Guarantees states never act on the wrong channel or become desynchronized.
    */
   const handleTakeCut = () => {
-    const currentPgm = activeProgramCameraRef.current || activeProgramCamera;
-    const currentPvw = activePreviewCameraRef.current || activePreviewCamera;
-    const incomingPgm = currentPvw || (currentPgm === 'cam1' ? 'cam2' : 'cam1');
+    const currentPgm = activeProgramCameraRef.current || activeProgramCamera || 'cam1';
+    let currentPvw = activePreviewCameraRef.current || activePreviewCamera;
 
-    triggerProgram(incomingPgm);
+    if (!currentPvw || currentPvw === currentPgm) {
+      currentPvw = currentPgm === 'cam1' ? 'cam2' : 'cam1';
+    }
+
+    const newProgram = currentPvw;
+    const newPreview = currentPgm;
+
+    console.log(`[DirectorView] Central CUT swap: PREVIEW (${newProgram}) -> PROGRAM (red), PROGRAM (${newPreview}) -> PREVIEW (green)`);
+
+    // Swap local UI states immediately
+    setProgramCamera(newProgram);
+    setPreviewCamera(newPreview);
+
+    // Send native vMix API command "Cut"
+    vmixService.sendTransitionCut().catch((err) => {
+      console.warn('[DirectorView] Non-blocking vMix sendTransitionCut notice:', err);
+    });
   };
 
   /**
-   * Broadcast Flip-Flop FADE Action:
-   * Transitions active Preview into Program via vMix Fade,
-   * automatically assigning outgoing Program as the incoming Preview.
-   * FADE remains permanently enabled for continuous cross-fading.
+   * Broadcast Central FADE Action:
+   * 1. Sends the vMix API command "Fade" with Duration=500 (transitions current PREVIEW live to PROGRAM and drops previous PROGRAM down to PREVIEW).
+   * 2. Swaps local UI states so PREVIEW moves to PROGRAM (red) and previous PROGRAM drops down to PREVIEW (green).
+   * 3. Guarantees states never act on the wrong channel or become desynchronized.
    */
   const handleFade = () => {
-    const currentPgm = activeProgramCameraRef.current || activeProgramCamera;
-    const currentPvw = activePreviewCameraRef.current || activePreviewCamera;
-    const incomingPgm = currentPvw || (currentPgm === 'cam1' ? 'cam2' : 'cam1');
-    const outgoingPgm = currentPgm || (incomingPgm === 'cam1' ? 'cam2' : 'cam1');
-    const nextPreview = outgoingPgm !== incomingPgm ? outgoingPgm : (incomingPgm === 'cam1' ? 'cam2' : 'cam1');
+    const currentPgm = activeProgramCameraRef.current || activeProgramCamera || 'cam1';
+    let currentPvw = activePreviewCameraRef.current || activePreviewCamera;
 
-    setProgramCamera(incomingPgm);
-    setPreviewCamera(nextPreview);
+    if (!currentPvw || currentPvw === currentPgm) {
+      currentPvw = currentPgm === 'cam1' ? 'cam2' : 'cam1';
+    }
 
-    vmixService.sendFade().catch((err) => {
+    const newProgram = currentPvw;
+    const newPreview = currentPgm;
+
+    console.log(`[DirectorView] Central FADE swap: PREVIEW (${newProgram}) -> PROGRAM (red), PROGRAM (${newPreview}) -> PREVIEW (green)`);
+
+    // Swap local UI states immediately
+    setProgramCamera(newProgram);
+    setPreviewCamera(newPreview);
+
+    // Send native vMix API command "Fade" with Duration=500
+    vmixService.sendFade(500).catch((err) => {
       console.warn('[DirectorView] Non-blocking vMix sendFade notice:', err);
-    });
-
-    vmixService.sendPreview(nextPreview).catch((err) => {
-      console.warn('[DirectorView] Non-blocking vMix sendPreview notice:', err);
     });
   };
 

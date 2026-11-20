@@ -891,14 +891,19 @@ class VmixService {
 
   /**
    * Send PROGRAM CUT command to vMix:
-   * Strict 1-to-1 default index correlation (Cam N -> Input N, left-to-right in vMix)
-   * Function=CutDirect&Input=[Mapped_Input]
+   * If cameraId is provided: Function=CutDirect&Input=[Mapped_Input] (direct camera cut)
+   * If cameraId is omitted: Function=Cut (broadcast transition swap between Preview and Program)
    */
-  public async sendCut(cameraId: string): Promise<boolean> {
+  public async sendCut(cameraId?: string): Promise<boolean> {
     try {
-      const defaultIndex = cameraId.replace(/\D/g, '') || '1';
-      const mappedInput = this.config.cameraMap[cameraId] || defaultIndex;
-      const result = await this.dispatchCommand('CutDirect', mappedInput);
+      let result;
+      if (cameraId) {
+        const defaultIndex = cameraId.replace(/\D/g, '') || '1';
+        const mappedInput = this.config.cameraMap[cameraId] || defaultIndex;
+        result = await this.dispatchCommand('CutDirect', mappedInput);
+      } else {
+        result = await this.dispatchCommand('Cut');
+      }
       if (result.success) {
         this.checkStatus().catch(() => {});
       }
@@ -910,12 +915,29 @@ class VmixService {
   }
 
   /**
-   * Send FADE transition command to vMix:
-   * Function=Fade (transitions Preview to Program using vMix's natively configured fade duration)
+   * Send broadcast transition CUT command to vMix:
+   * Function=Cut (takes current Preview live to Program and swaps Program into Preview)
    */
-  public async sendFade(): Promise<boolean> {
+  public async sendTransitionCut(): Promise<boolean> {
     try {
-      const result = await this.dispatchCommand('Fade');
+      const result = await this.dispatchCommand('Cut');
+      if (result.success) {
+        this.checkStatus().catch(() => {});
+      }
+      return result.success;
+    } catch (err: any) {
+      console.warn('[VmixService] sendTransitionCut caught error:', err.message);
+      return false;
+    }
+  }
+
+  /**
+   * Send FADE transition command to vMix:
+   * Function=Fade&Duration=500 (transitions Preview to Program and swaps Program into Preview)
+   */
+  public async sendFade(durationMs: number = 500): Promise<boolean> {
+    try {
+      const result = await this.dispatchCommand('Fade', undefined, { Duration: durationMs.toString() });
       if (result.success) {
         this.checkStatus().catch(() => {});
       }
