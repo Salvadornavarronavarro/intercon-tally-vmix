@@ -106,8 +106,149 @@ class VmixService {
     } catch (err) {
       console.warn('[VmixService] Failed to load config from storage:', err);
     }
+
+    // Zero-setup automatic fallback for external devices (such as an iPad over direct Ethernet cable or LAN):
+    // If the configured host is 127.0.0.1 or localhost, but this web app was opened from a specific host IP
+    // (such as link-local 169.254.x.x or LAN 192.168.x.x), automatically adapt the host to that PC IP.
+    if (typeof window !== 'undefined' && window.location && window.location.hostname) {
+      const browserHost = window.location.hostname.trim();
+      if (
+        (this.config.host === '127.0.0.1' || this.config.host === 'localhost') &&
+        browserHost &&
+        browserHost !== 'localhost' &&
+        browserHost !== '127.0.0.1' &&
+        !browserHost.endsWith('.onrender.com') &&
+        !browserHost.endsWith('.railway.app')
+      ) {
+        console.log(`[VmixService] Automatic fallback: Adapting vMix host from 127.0.0.1 to PC host IP ${browserHost}`);
+        this.config.host = browserHost;
+      }
+    }
+
     this.isLoaded = true;
     return this.config;
+  }
+
+  /**
+   * Probes a specific host and port to check if vMix Web Controller responds.
+   * Tests both XML fetch and no-cors reachability.
+   */
+  public async probeHost(host: string, port = '8088', timeoutMs = 1500): Promise<boolean> {
+    const cleanHost = host.trim().replace(/^https?:\/\//i, '').split(':')[0];
+    const cleanPort = port.trim();
+    const url = `http://${cleanHost}:${cleanPort}/api`;
+
+    // 1. Try quick XML fetch
+    try {
+      const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+      const timeoutId = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
+      const res = await fetch(url, {
+        method: 'GET',
+        mode: 'cors',
+        cache: 'no-store',
+        headers: { Accept: 'text/xml, application/xml, */*' },
+        signal: controller ? controller.signal : undefined,
+      });
+      if (timeoutId) clearTimeout(timeoutId);
+      if (res.ok && res.status === 200) {
+        return true;
+      }
+    } catch {
+      // CORS or network failure, proceed to no-cors probe
+    }
+
+    // 2. Try no-cors probe
+    try {
+      const probeController = typeof AbortController !== 'undefined' ? new AbortController() : null;
+      const probeTimeout = probeController ? setTimeout(() => probeController.abort(), timeoutMs) : null;
+      await fetch(url, {
+        method: 'GET',
+        mode: 'no-cors',
+        cache: 'no-store',
+        signal: probeController ? probeController.signal : undefined,
+      });
+      if (probeTimeout) clearTimeout(probeTimeout);
+      // Resolved without throwing! The port is open and responding to HTTP requests.
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Automatically discovers and tests potential PC host IPs (including link-local 169.254.x.x,
+   * server /api/network-info candidates, window.location.hostname, and current config).
+   * Automatically connects to the first reachable host on port 8088.
+   */
+  public async autoDetectVmixHost(): Promise<{ success: boolean; host?: string; message: string }> {
+    const port = (this.config.port || '8088').trim();
+    const candidates: string[] = [];
+
+    // 1. If loaded in browser on an external device (e.g. iPad at http://169.254.x.x:3000),
+    // window.location.hostname is the PC itself!
+    if (typeof window !== 'undefined' && window.location && window.location.hostname) {
+      const h = window.location.hostname.trim();
+      if (h && h !== 'localhost' && h !== '127.0.0.1' && !h.endsWith('.onrender.com') && !h.endsWith('.railway.app')) {
+        candidates.push(h);
+      }
+    }
+
+    // 2. Query the web server's /api/network-info to get the PC's actual network interfaces
+    try {
+      const serverOrigin = typeof window !== 'undefined' && window.location && window.location.origin
+        ? window.location.origin
+        : 'http://localhost:3000';
+      const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+      const timeoutId = controller ? setTimeout(() => controller.abort(), 2000) : null;
+      const netRes = await fetch(`${serverOrigin}/api/network-info`, {
+        signal: controller ? controller.signal : undefined,
+      });
+      if (timeoutId) clearTimeout(timeoutId);
+      if (netRes.ok) {
+        const data = await netRes.json();
+        if (Array.isArray(data.candidateIps)) {
+          for (const ip of data.candidateIps) {
+            if (ip && typeof ip === 'string') {
+              candidates.push(ip.trim());
+            }
+          }
+        }
+      }
+    } catch (err) {
+      console.log('[VmixService] /api/network-info fetch skipped or failed:', err);
+    }
+
+    // 3. Add current config host and localhost fallback
+    if (this.config.host) {
+      candidates.push(this.config.host.trim());
+    }
+    candidates.push('127.0.0.1');
+
+    // Remove duplicates
+    const uniqueCandidates = Array.from(new Set(candidates)).filter(Boolean);
+
+    console.log('[VmixService] Auto-detecting vMix host among candidates:', uniqueCandidates);
+
+    // Test candidates sequentially
+    for (const host of uniqueCandidates) {
+      console.log(`[VmixService] Probing candidate: ${host}:${port}...`);
+      const isReachable = await this.probeHost(host, port, 1500);
+      if (isReachable) {
+        console.log(`[VmixService] Found reachable vMix at ${host}:${port}!`);
+        await this.updateConfig({ host });
+        await this.checkStatus();
+        return {
+          success: true,
+          host,
+          message: `Conectado exitosamente a vMix en ${host}:${port}`,
+        };
+      }
+    }
+
+    return {
+      success: false,
+      message: `No se detectó vMix en puerto ${port} tras verificar: ${uniqueCandidates.join(', ')}. Verifica que Web Controller esté activo en vMix.`,
+    };
   }
 
   /**

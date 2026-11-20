@@ -274,6 +274,56 @@ app.post(['/api/vmix-sync', '/vmix-sync'], (req, res) => {
   });
 });
 
+// Network interfaces & PC host IPs discovery for iPad / Ethernet zero-setup
+app.get(['/api/network-info', '/api/host-info'], (req, res) => {
+  const ifaces = os.networkInterfaces();
+  const interfaces = [];
+  const candidateIps = [];
+
+  for (const [name, addrs] of Object.entries(ifaces)) {
+    for (const a of addrs || []) {
+      if (a.family === 'IPv4') {
+        const isInternal = !!a.internal;
+        const isLinkLocal = a.address.startsWith('169.254.');
+        interfaces.push({
+          name,
+          ip: a.address,
+          internal: isInternal,
+          isLinkLocal,
+        });
+
+        if (!isInternal) {
+          // Put link-local and LAN IPs upfront
+          if (isLinkLocal) {
+            candidateIps.unshift(a.address);
+          } else {
+            candidateIps.push(a.address);
+          }
+        }
+      }
+    }
+  }
+
+  // Always include 127.0.0.1 as ultimate local fallback
+  candidateIps.push('127.0.0.1');
+
+  // Client IP (from socket or proxy)
+  const clientIp = (req.headers['x-forwarded-for'] || req.socket.remoteAddress || '')
+    .split(',')[0]
+    .trim()
+    .replace(/^::ffff:/, '');
+
+  res.status(200).json({
+    success: true,
+    port: PORT,
+    host: HOST,
+    candidateIps: Array.from(new Set(candidateIps)),
+    interfaces,
+    clientIp,
+    timestamp: Date.now(),
+  });
+});
+
 // Health check endpoint for Render, Railway, Kubernetes, or monitoring
 app.get(['/health', '/api/health', '/healthz'], (req, res) => {
   let totalConnectedClients = 0;
@@ -1034,27 +1084,32 @@ server.listen(PORT, HOST, () => {
   for (const [name, addrs] of Object.entries(ifaces)) {
     for (const a of addrs || []) {
       if (a.family === 'IPv4' && !a.internal) {
-        localAddrs.push({ name, ip: a.address });
+        const typeHint = a.address.startsWith('169.254.')
+          ? 'Direct Ethernet / iPad Link'
+          : a.address.startsWith('172.20.10.')
+          ? 'USB Tethering'
+          : 'LAN / Wi-Fi';
+        localAddrs.push({ name, ip: a.address, typeHint });
       }
     }
   }
 
   const networkLines = localAddrs.length > 0
-    ? localAddrs.map((a) => `   - [${a.name}] http://${a.ip}:${PORT}/`).join('\n')
+    ? localAddrs.map((a) => `   - [${a.typeHint} - ${a.name}] http://${a.ip}:${PORT}/`).join('\n')
     : `   - (No external IPv4 interface found)`;
 
   console.log(`
 ======================================================================
 📡 Intercon-Tally-V2-vMix Signaling & Bridge Server Online (v2.0.0)
 ======================================================================
-Port:               ${PORT}
+Port:               ${PORT} (Fixed, 0.0.0.0)
 Host:               ${HOST}
 Local URL:          http://localhost:${PORT}/
 vMix Sync Relay:    http://localhost:${PORT}/api/vmix-sync
 Health & Metrics:   http://localhost:${PORT}/health
 Static Dir (dist):  ${fs.existsSync(DIST_DIR) ? 'Active (' + DIST_DIR + ')' : 'Not built yet (run npm run build)'}
 
-📱 Network & USB Tethering IPs (for Director iPad / Devices):
+📱 Open this exact URL on your iPad / External Devices (Ethernet or Wi-Fi):
 ${networkLines}
 ======================================================================
   `);

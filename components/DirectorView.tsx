@@ -68,6 +68,9 @@ export const DirectorView: React.FC = () => {
   const [cameraMuteMap, setCameraMuteMap] = useState<Record<string, boolean>>({});
   const [isAuthModalOpen, setIsAuthModalOpen] = useState<boolean>(false);
   const [activeTab, setActiveTab] = useState<'tally' | 'audio' | 'vmix'>('tally');
+  const [isAutoDetecting, setIsAutoDetecting] = useState<boolean>(false);
+  const [autoDetectFeedback, setAutoDetectFeedback] = useState<string | null>(null);
+  const [detectedHostSuggestion, setDetectedHostSuggestion] = useState<string | null>(null);
 
   // QR Code camera invite modal state
   const [isQrModalOpen, setIsQrModalOpen] = useState<boolean>(false);
@@ -189,6 +192,28 @@ pause
       setVmixHostInput(cfg.host);
       setVmixPortInput(cfg.port);
       setCameraMapState(cfg.cameraMap);
+
+      // Zero-setup automatic fallback for iPad / Ethernet devices
+      if (typeof window !== 'undefined' && window.location && window.location.hostname) {
+        const browserHost = window.location.hostname.trim();
+        if (
+          browserHost &&
+          browserHost !== 'localhost' &&
+          browserHost !== '127.0.0.1' &&
+          !browserHost.endsWith('.onrender.com') &&
+          !browserHost.endsWith('.railway.app')
+        ) {
+          setDetectedHostSuggestion(browserHost);
+          if (cfg.host === '127.0.0.1' || cfg.host === 'localhost') {
+            console.log(`[DirectorView] Auto-fallback to PC host IP: ${browserHost}`);
+            setVmixHostInput(browserHost);
+            vmixService.updateConfig({ host: browserHost }).then((updated) => {
+              setVmixConfig(updated);
+              vmixService.checkStatus().catch(() => {});
+            });
+          }
+        }
+      }
 
       unsubStatus = vmixService.onStatusChange((status) => {
         setVmixStatus(status);
@@ -338,6 +363,26 @@ pause
     const updated = await vmixService.updateConfig({ host: host.trim() });
     setVmixConfig(updated);
     vmixService.checkStatus().catch(() => {});
+  };
+
+  const handleAutoDetectVmix = async () => {
+    setIsAutoDetecting(true);
+    setAutoDetectFeedback(null);
+    try {
+      const res = await vmixService.autoDetectVmixHost();
+      if (res.success && res.host) {
+        setVmixHostInput(res.host);
+        setVmixConfig(vmixService.getConfig());
+        setAutoDetectFeedback(`✓ Conectado a ${res.host}`);
+      } else {
+        setAutoDetectFeedback(res.message);
+      }
+    } catch (err: any) {
+      setAutoDetectFeedback(`Error en auto-detección: ${err?.message || err}`);
+    } finally {
+      setIsAutoDetecting(false);
+      setTimeout(() => setAutoDetectFeedback(null), 6000);
+    }
   };
 
   const handleSaveVmixPort = async (port: string) => {
@@ -1141,18 +1186,64 @@ pause
                 {/* Host IP & Port Inputs */}
                 <View style={styles.vmixConfigRow}>
                   <View style={styles.vmixInputGroup}>
-                    <Text style={styles.vmixInputLabel}>vMix HOST IP (USB / LAN):</Text>
+                    <View style={styles.vmixInputLabelRow}>
+                      <Text style={styles.vmixInputLabel}>vMix HOST IP (USB / LAN / ETHERNET):</Text>
+                      <TouchableOpacity
+                        style={[
+                          styles.vmixAutoDetectBtn,
+                          isAutoDetecting && styles.vmixAutoDetectBtnActive,
+                        ]}
+                        onPress={handleAutoDetectVmix}
+                        disabled={isAutoDetecting}
+                        activeOpacity={0.7}
+                      >
+                        <Text style={styles.vmixAutoDetectBtnText}>
+                          {isAutoDetecting ? '⏳ BUSCANDO...' : '🔍 AUTO-DETECTAR'}
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
                     <TextInput
                       style={styles.vmixTextInput}
                       value={vmixHostInput}
                       onChangeText={handleSaveVmixHost}
-                      placeholder="127.0.0.1 or 172.20.10.2"
+                      placeholder="127.0.0.1 or 169.254.x.x"
                       placeholderTextColor="#666"
                       autoCapitalize="none"
                       autoCorrect={false}
                     />
+                    {autoDetectFeedback && (
+                      <Text
+                        style={[
+                          styles.vmixAutoDetectFeedbackText,
+                          autoDetectFeedback.startsWith('✓') ? styles.textGreen : styles.textYellow,
+                        ]}
+                      >
+                        {autoDetectFeedback}
+                      </Text>
+                    )}
                     {/* Quick presets for common USB / local IPs */}
                     <View style={styles.vmixPresetRow}>
+                      {detectedHostSuggestion && detectedHostSuggestion !== '127.0.0.1' && (
+                        <TouchableOpacity
+                          style={[
+                            styles.vmixPresetChip,
+                            styles.vmixPresetChipEthernet,
+                            vmixHostInput === detectedHostSuggestion && styles.vmixPresetChipActive,
+                          ]}
+                          onPress={() => handleSaveVmixHost(detectedHostSuggestion)}
+                          activeOpacity={0.7}
+                        >
+                          <Text
+                            style={[
+                              styles.vmixPresetText,
+                              styles.vmixPresetTextEthernet,
+                              vmixHostInput === detectedHostSuggestion && styles.vmixPresetTextActive,
+                            ]}
+                          >
+                            Ethernet PC ({detectedHostSuggestion})
+                          </Text>
+                        </TouchableOpacity>
+                      )}
                       <TouchableOpacity
                         style={[
                           styles.vmixPresetChip,
@@ -2131,6 +2222,38 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     marginBottom: 6,
   },
+  vmixInputLabelRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 6,
+  },
+  vmixAutoDetectBtn: {
+    backgroundColor: '#1E293B',
+    borderWidth: 1,
+    borderColor: '#3B82F6',
+    borderRadius: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+  },
+  vmixAutoDetectBtnActive: {
+    backgroundColor: '#1D4ED8',
+    borderColor: '#60A5FA',
+  },
+  vmixAutoDetectBtnText: {
+    color: '#60A5FA',
+    fontSize: 9.5,
+    fontWeight: '800',
+    letterSpacing: 0.5,
+  },
+  vmixAutoDetectFeedbackText: {
+    fontSize: 10.5,
+    fontWeight: '600',
+    marginTop: 4,
+  },
+  textYellow: {
+    color: '#FBBF24',
+  },
   vmixTextInput: {
     backgroundColor: '#1A1A24',
     borderWidth: 1,
@@ -2163,6 +2286,14 @@ const styles = StyleSheet.create({
     color: '#3B82F6',
     fontSize: 10,
     fontWeight: '700',
+  },
+  vmixPresetChipEthernet: {
+    borderColor: '#059669',
+    backgroundColor: 'rgba(5, 150, 105, 0.15)',
+  },
+  vmixPresetTextEthernet: {
+    color: '#34D399',
+    fontWeight: '800',
   },
   vmixTestBtn: {
     marginTop: 6,
