@@ -720,7 +720,7 @@ class VmixService {
     const url = this.getDirectVmixUrl(`?${params.toString()}`);
     console.log(`[VmixService] Direct dispatch: ${functionName} (Input: ${inputParam}) -> ${url}`);
 
-    // Always dispatch via HTTP Bridge (Image Beacon & Hidden Iframe) to ensure zero Mixed-Content blocking in Safari
+    // Always dispatch silently via HTTP Bridge (Passive Image Beacon & Dynamic Script) for zero-popup execution in Safari/iOS
     this.sendViaHttpBridge(url);
 
     try {
@@ -745,46 +745,50 @@ class VmixService {
   }
 
   /**
-   * Dispatches commands to vMix using non-blocking Image Beacon & Hidden IFrame Form Bridge.
-   * Completely immune to Safari Mixed-Content and Private Network Access blocks from HTTPS pages.
+   * Dispatches commands to vMix silently in the background using passive Image beacons and dynamic scripts.
+   * Completely avoids any HTML form submissions so Safari iOS NEVER shows "Este formulario no es seguro".
+   * Commands like CUT, PREVIEW, FADE, AUDIO execute instantaneously in vMix without any security dialog.
    */
   public sendViaHttpBridge(url: string): void {
+    const cacheBuster = `_t=${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const fullUrl = `${url}${url.includes('?') ? '&' : '?'}${cacheBuster}`;
+
+    // Clean up any legacy form or iframe elements from the DOM if present
+    if (typeof document !== 'undefined') {
+      try {
+        const oldForm = document.getElementById('vmix_bridge_form');
+        if (oldForm) oldForm.remove();
+        const oldIframe = document.getElementById('vmix_bridge_iframe');
+        if (oldIframe) oldIframe.remove();
+      } catch {}
+    }
+
+    // 1. Primary: Passive Image beacon (Allowed silently by Safari / WebKit with zero popups)
     try {
-      // 1. Image Beacon (Passive Mixed Content - allowed by Safari/WebKit)
       const img = new Image();
-      img.src = `${url}${url.includes('?') ? '&' : '?'}_t=${Date.now()}`;
-    } catch {}
+      img.src = fullUrl;
+    } catch (e) {
+      console.warn('[VmixService] Image beacon dispatch notice:', e);
+    }
 
-    try {
-      // 2. Hidden Iframe Form Submission (Navigation request - allowed across mixed content)
-      if (typeof document !== 'undefined') {
-        let iframe = document.getElementById('vmix_bridge_iframe') as HTMLIFrameElement;
-        if (!iframe) {
-          iframe = document.createElement('iframe');
-          iframe.id = 'vmix_bridge_iframe';
-          iframe.name = 'vmix_bridge_iframe';
-          iframe.style.position = 'absolute';
-          iframe.style.width = '1px';
-          iframe.style.height = '1px';
-          iframe.style.left = '-9999px';
-          iframe.style.display = 'none';
-          document.body.appendChild(iframe);
-        }
-
-        let form = document.getElementById('vmix_bridge_form') as HTMLFormElement;
-        if (!form) {
-          form = document.createElement('form');
-          form.id = 'vmix_bridge_form';
-          form.style.display = 'none';
-          form.target = 'vmix_bridge_iframe';
-          form.method = 'GET';
-          document.body.appendChild(form);
-        }
-
-        form.action = url;
-        form.submit();
+    // 2. Secondary: Dynamic script tag (Executed silently in the background by WebKit without form prompt)
+    if (typeof document !== 'undefined') {
+      try {
+        const script = document.createElement('script');
+        script.src = fullUrl;
+        script.async = true;
+        script.onload = () => {
+          try { script.remove(); } catch {}
+        };
+        script.onerror = () => {
+          // Expected because vMix responds with XML, but the HTTP GET was already sent & executed!
+          try { script.remove(); } catch {}
+        };
+        (document.head || document.body || document.documentElement).appendChild(script);
+      } catch (e) {
+        console.warn('[VmixService] Dynamic script dispatch notice:', e);
       }
-    } catch {}
+    }
   }
 
   /**
