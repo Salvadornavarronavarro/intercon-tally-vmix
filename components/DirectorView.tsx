@@ -120,57 +120,14 @@ export const DirectorView: React.FC = () => {
     }
   };
 
-  const handleDownloadConnector = () => {
-    let serverOrigin = 'https://intercon-tally-v2-vmix.onrender.com';
-    if (typeof window !== 'undefined' && window.location && window.location.origin) {
-      serverOrigin = window.location.origin;
-    }
-    const cleanRoom = (currentRoomId || 'DEFAULT').trim();
+  const handleOpenHttpDirect = () => {
+    const host = (vmixConfig.host || '127.0.0.1').trim();
+    const port = (vmixConfig.port || '8088').trim();
+    const targetUrl = `http://${host}:${port}/`;
 
-    const batScript = `@echo off
-title vMix Live Tally Connector
-echo ====================================================
-echo  vMix Direct Tally Relay for Intercon Tally V2
-echo  Room ID: ${cleanRoom}
-echo  Target:  ${serverOrigin}
-echo ====================================================
-echo Connecting to local vMix (http://127.0.0.1:8088/api)...
-echo Running automatic PowerShell synchronization loop...
-powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-  "$room = '${cleanRoom}'; $server = '${serverOrigin}/api/vmix-sync'; $vmixUrl = 'http://127.0.0.1:8088/api'; ^
-   Write-Host ('vMix Relay Active! Room: ' + $room); ^
-   $lastActive = ''; $lastPreview = ''; ^
-   while($true) { ^
-     try { ^
-       $res = Invoke-WebRequest -Uri $vmixUrl -TimeoutSec 2 -UseBasicParsing; ^
-       $xml = [xml]$res.Content; ^
-       $act = [string]$xml.vmix.active; ^
-       $prev = [string]$xml.vmix.preview; ^
-       $ver = [string]$xml.vmix.version; ^
-       if ($act -ne $lastActive -or $prev -ne $lastPreview) { ^
-         $lastActive = $act; $lastPreview = $prev; ^
-         Write-Host ('[' + (Get-Date -Format 'HH:mm:ss') + '] vMix Changed -> PGM: ' + $act + ' | PVW: ' + $prev); ^
-         $body = @{ roomId = $room; active = $act; preview = $prev; version = $ver } | ConvertTo-Json; ^
-         Invoke-RestMethod -Uri $server -Method POST -Body $body -ContentType 'application/json' -TimeoutSec 3 | Out-Null; ^
-       } ^
-     } catch { ^
-       Write-Warning ('[' + (Get-Date -Format 'HH:mm:ss') + '] Waiting for vMix at 127.0.0.1:8088...'); ^
-     } ^
-     Start-Sleep -Milliseconds 800; ^
-   }"
-pause
-`;
-
-    if (typeof window !== 'undefined' && typeof document !== 'undefined') {
-      const blob = new Blob([batScript], { type: 'text/plain;charset=utf-8' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `vmix-connector-${cleanRoom}.bat`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
+    if (typeof window !== 'undefined') {
+      // One-tap direct HTTP controller open (bypasses Safari mixed-content blocks)
+      window.open(targetUrl, '_blank');
     }
   };
 
@@ -260,6 +217,20 @@ pause
       });
 
       vmixService.startPolling(3000);
+
+      // Background zero-setup host auto-detection for iPad / Ethernet devices
+      setTimeout(() => {
+        const currentCfg = vmixService.getConfig();
+        if (!currentCfg.host || currentCfg.host === '127.0.0.1') {
+          console.log('[DirectorView] Auto-triggering background vMix host detection for iPad/Ethernet...');
+          vmixService.autoDetectVmixHost().then((res) => {
+            if (res.success && res.host) {
+              setVmixHostInput(res.host);
+              setVmixConfig(vmixService.getConfig());
+            }
+          }).catch(() => {});
+        }
+      }, 600);
     })();
 
     return () => {
@@ -1153,7 +1124,9 @@ pause
                           ]}
                         >
                           {vmixStatus.connected
-                            ? vmixStatus.version === 'Direct Local Control'
+                            ? vmixStatus.version === 'Modo Puente HTTP Activo (Safari Direct)'
+                              ? 'ONLINE (Modo Puente HTTP Activo)'
+                              : vmixStatus.version === 'Direct Local Control'
                               ? 'ONLINE (Direct Local Control Active)'
                               : `ONLINE (${vmixStatus.version ? 'v' + vmixStatus.version : 'READY'})`
                             : 'OFFLINE'}
@@ -1364,8 +1337,8 @@ pause
 
                   <Text style={styles.vmixBannerMessage}>
                     {vmixStatus.connected
-                      ? vmixStatus.version === 'Direct Local Control'
-                        ? `Direct Local Control is ACTIVE. Blind HTTP commands (CUT, PREVIEW, FADE, AUDIO) execute immediately on vMix without CORS restrictions.`
+                      ? vmixStatus.version === 'Modo Puente HTTP Activo (Safari Direct)' || vmixStatus.version === 'Direct Local Control'
+                        ? `Live vMix Connection activa vía Modo Puente HTTP directo. Tus órdenes (CUT, PREVIEW, FADE, AUDIO) se ejecutan directamente en vMix en http://${vmixConfig.host}:${vmixConfig.port}/api sin bloqueos de Safari.`
                         : `Live vMix state: Program input is ${vmixStatus.activeInput || 'None'} • Preview input is ${vmixStatus.previewInput || 'None'}. Full-duplex tally polling active at http://${vmixConfig.host}:${vmixConfig.port}/api.`
                       : `Cannot reach vMix at http://${vmixConfig.host}:${vmixConfig.port}/api (${vmixStatus.error || 'Connection refused'}). Verify that vMix Web Controller is enabled in vMix Settings > Web Controller.`}
                   </Text>
@@ -1381,24 +1354,29 @@ pause
                   </View>
                 </View>
 
-                {/* LAYER B: Standalone Zero-Dependency Local Connector */}
-                <View style={styles.vmixConnectorBox}>
-                  <View style={styles.vmixConnectorTitleRow}>
-                    <Text style={styles.vmixConnectorIcon}>⚡</Text>
-                    <Text style={styles.vmixConnectorTitle}>
-                      CONECTOR BIDIRECCIONAL AUTOMÁTICO vMIX (WINDOWS/MAC)
-                    </Text>
+                {/* 100% Web-Based One-Tap HTTP Fallback / Bridge Mode */}
+                <View style={styles.vmixHttpBridgeCard}>
+                  <View style={styles.vmixHttpBridgeHeader}>
+                    <Text style={styles.vmixHttpBridgeIcon}>⚡</Text>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.vmixHttpBridgeTitle}>
+                        MODO PUENTE HTTP DIRECTO (SAFARI / IPAD)
+                      </Text>
+                      <Text style={styles.vmixHttpBridgeSubtitle}>
+                        Control 100% Web • Cero descargas o instalaciones en el PC
+                      </Text>
+                    </View>
                   </View>
-                  <Text style={styles.vmixConnectorDesc}>
-                    Para sincronización total bidireccional de estados Tally y nombres de cámaras sin bloqueos CORS del navegador: descarga y ejecuta este conector ligero preconfigurado con tu Sala actual ({currentRoomId || 'DEFAULT'}).
+                  <Text style={styles.vmixHttpBridgeDesc}>
+                    El Modo Puente HTTP interno ya está activo en esta aplicación web para enviar órdenes (CUT, PREVIEW, FADE y AUDIO) directamente a vMix en http://{vmixConfig.host}:{vmixConfig.port || '8088'}/api sin bloqueos de Mixed Content. También puedes abrir el controlador directo de vMix en Safari con un solo toque:
                   </Text>
                   <TouchableOpacity
-                    style={styles.vmixConnectorBtn}
-                    onPress={handleDownloadConnector}
+                    style={styles.vmixHttpBridgeBtn}
+                    onPress={handleOpenHttpDirect}
                     activeOpacity={0.85}
                   >
-                    <Text style={styles.vmixConnectorBtnText}>
-                      ⚡ Descargar Conector Automático vMix (Windows/Mac)
+                    <Text style={styles.vmixHttpBridgeBtnText}>
+                      ⚡ ABRIR CONTROLADOR DIRECTO HTTP (PUERTO {vmixConfig.port || '8088'})
                     </Text>
                   </TouchableOpacity>
                 </View>
@@ -2404,37 +2382,43 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     letterSpacing: 0.4,
   },
-  vmixConnectorBox: {
-    backgroundColor: '#111827',
+  vmixHttpBridgeCard: {
+    backgroundColor: '#0F172A',
     padding: 14,
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: '#374151',
+    borderColor: '#1E293B',
     gap: 8,
     marginTop: 10,
   },
-  vmixConnectorTitleRow: {
+  vmixHttpBridgeHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
   },
-  vmixConnectorIcon: {
-    fontSize: 14,
-    color: '#F59E0B',
+  vmixHttpBridgeIcon: {
+    fontSize: 16,
+    color: '#3B82F6',
   },
-  vmixConnectorTitle: {
-    color: '#F9FAFB',
+  vmixHttpBridgeTitle: {
+    color: '#F8FAFC',
     fontSize: 12,
     fontWeight: '800',
     letterSpacing: 0.5,
   },
-  vmixConnectorDesc: {
-    color: '#9CA3AF',
+  vmixHttpBridgeSubtitle: {
+    color: '#64748B',
+    fontSize: 10,
+    fontWeight: '600',
+    marginTop: 1,
+  },
+  vmixHttpBridgeDesc: {
+    color: '#94A3B8',
     fontSize: 11,
     lineHeight: 16,
   },
-  vmixConnectorBtn: {
-    backgroundColor: '#2563EB',
+  vmixHttpBridgeBtn: {
+    backgroundColor: '#1D4ED8',
     paddingVertical: 10,
     paddingHorizontal: 14,
     borderRadius: 6,
@@ -2444,7 +2428,7 @@ const styles = StyleSheet.create({
     gap: 8,
     marginTop: 4,
   },
-  vmixConnectorBtnText: {
+  vmixHttpBridgeBtnText: {
     color: '#FFFFFF',
     fontSize: 11.5,
     fontWeight: '800',
